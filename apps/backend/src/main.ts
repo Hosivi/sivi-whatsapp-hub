@@ -2,29 +2,36 @@
  * main.ts — Web process entrypoint.
  *
  * Boot sequence:
- *   1. Build the Hono app via buildApp()
- *   2. Start @hono/node-server on PORT (default 3001)
- *   3. Register SIGTERM/SIGINT for graceful shutdown
+ *   1. loadEnv() — validate configuration, fail-fast on misconfig
+ *   2. createDbClient(env) — open the app_rls (non-superuser) pool + privileged admin handle
+ *   3. buildApp({ db, env }) — mount health + contacts CRUD behind the tenant middleware
+ *   4. Start @hono/node-server on env.PORT
+ *   5. Register SIGTERM/SIGINT for graceful shutdown (closes DB pools)
  *
- * No database, no DI container — functional composition only.
+ * Migrations are NOT run here — use the dedicated `pnpm migrate` script
+ * (src/db/migrate.ts) before serving so RLS + the app_rls role reach the database.
+ *
+ * Functional composition — no DI container, no classes, no decorators.
  */
 
 import { serve } from '@hono/node-server';
 import pino from 'pino';
 import { buildApp } from './app.js';
+import { loadEnv } from './config/env.js';
+import { createDbClient } from './db/client.js';
 
-const DEFAULT_PORT = 3001;
+const env = loadEnv();
 
-const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+const logger = pino({ level: env.LOG_LEVEL });
 
-const app = buildApp();
+const db = createDbClient(env);
 
-const port = Number(process.env.PORT ?? DEFAULT_PORT);
+const app = buildApp({ db, env });
 
 serve(
   {
     fetch: app.fetch,
-    port,
+    port: env.PORT,
   },
   (info) => {
     logger.info(`[main] sivi-whatsapp-hub listening on http://localhost:${info.port}`);
@@ -33,7 +40,7 @@ serve(
 
 const shutdown = (signal: string): void => {
   logger.info(`[main] received ${signal} — shutting down`);
-  process.exit(0);
+  void db.close().finally(() => process.exit(0));
 };
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
