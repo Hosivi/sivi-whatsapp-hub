@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS "contacts" (
 	"deleted_at" timestamptz
 );
 
+ALTER TABLE "contacts" DROP CONSTRAINT IF EXISTS "intent_confidence_range";
 ALTER TABLE "contacts" ADD CONSTRAINT "intent_confidence_range"
   CHECK (intent_confidence >= 0 AND intent_confidence <= 1);
 
@@ -43,6 +44,7 @@ ALTER TABLE contacts FORCE ROW LEVEL SECURITY;
 -- returns NULL instead of raising an error when the GUC is not yet set.
 -- NULL = '' cannot equal any tenant_id UUID, so the policy returns 0 rows (default-deny).
 -- NULLIF converts '' (empty string) to NULL, preventing a cast error on ''::uuid.
+DROP POLICY IF EXISTS tenant_isolation ON contacts;
 CREATE POLICY tenant_isolation ON contacts
   USING (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::uuid);

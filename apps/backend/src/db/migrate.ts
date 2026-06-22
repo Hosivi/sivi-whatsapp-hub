@@ -2,9 +2,11 @@
  * migrate.ts — Idempotent migration runner.
  *
  * Reads drizzle/0000_contacts.sql and executes it via the privileged adminSql
- * connection. Safe to re-run: the SQL uses CREATE TABLE IF NOT EXISTS, CREATE
- * INDEX IF NOT EXISTS, CREATE UNIQUE INDEX IF NOT EXISTS. RLS commands are
- * idempotent (ALTER TABLE ... ENABLE / FORCE are no-ops if already set).
+ * connection. Idempotent / safe to re-run: tables and indexes use IF NOT EXISTS;
+ * the CHECK constraint and RLS policy use DROP ... IF EXISTS before (re)create;
+ * ALTER TABLE ... ENABLE / FORCE RLS are no-ops when already set; and CREATE ROLE
+ * is wrapped in a DO/EXCEPTION block (see makeIdempotent) that re-syncs the role
+ * password on a re-run.
  *
  * WARNING — drizzle-kit regen footgun:
  *   Running `pnpm drizzle-kit generate` OVERWRITES drizzle/0000_contacts.sql and
@@ -36,19 +38,22 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATION_SQL_PATH = join(__dirname, '../../drizzle/0000_contacts.sql');
 
 /**
- * Wraps CREATE ROLE to be idempotent via PL/pgSQL exception handling.
- * The raw SQL uses psql variable syntax (:'app_rls_pw') which the postgres.js
- * driver cannot expand — we replace the CREATE ROLE line with an idempotent block.
+ * Replaces the bare CREATE ROLE line with an idempotent DO block.
+ * The password is supplied by the caller (from APP_RLS_PASSWORD) — never a source
+ * literal — and MUST match the app_rls password embedded in DATABASE_URL. On a
+ * re-run the role already exists, so we ALTER its password to keep it in sync.
  */
-function makeIdempotent(sql: string): string {
-  // Replace the bare CREATE ROLE line with a DO block that ignores duplicate_object.
+export function makeIdempotent(sql: string, appRlsPassword: string): string {
+  const safePw = appRlsPassword.replace(/'/g, "''");
+  // A replacement FUNCTION is required here: a replacement STRING would treat the
+  // `$$` dollar-quote delimiters as `$`-escapes (`$$` -> `$`) and corrupt the DO block.
   return sql.replace(
     /CREATE ROLE app_rls[^\n;]+;/,
-    `DO $$
+    () => `DO $$
 BEGIN
-  CREATE ROLE app_rls LOGIN PASSWORD 'app_rls_production' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  CREATE ROLE app_rls LOGIN PASSWORD '${safePw}' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 EXCEPTION WHEN duplicate_object THEN
-  NULL;
+  ALTER ROLE app_rls LOGIN PASSWORD '${safePw}';
 END
 $$;`,
   );
@@ -61,11 +66,14 @@ $$;`,
  * @param env - Parsed environment configuration (DATABASE_ADMIN_URL required).
  */
 export async function runMigration(env: Env): Promise<void> {
+  // app_rls role password — sourced from env (never a source literal); it MUST
+  // match the app_rls password embedded in DATABASE_URL.
+  const appRlsPassword = process.env.APP_RLS_PASSWORD ?? 'app_rls';
   const adminSql = postgres(env.DATABASE_ADMIN_URL, { max: 1 });
 
   try {
     const raw = readFileSync(MIGRATION_SQL_PATH, 'utf-8');
-    const idempotent = makeIdempotent(raw);
+    const idempotent = makeIdempotent(raw, appRlsPassword);
     await adminSql.unsafe(idempotent);
     console.info('[migrate] migration applied successfully');
   } finally {

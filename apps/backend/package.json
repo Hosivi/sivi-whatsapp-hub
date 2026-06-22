@@ -9,7 +9,8 @@
     "test": "vitest run",
     "lint": "biome check .",
     "dev": "tsx watch src/main.ts",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",
