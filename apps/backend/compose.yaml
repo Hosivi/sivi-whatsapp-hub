@@ -1,0 +1,28 @@
+# compose.yaml — Local development services for apps/backend.
+#
+# Start: docker compose up -d
+# Stop:  docker compose down
+#
+# The app_rls role and schema are provisioned by running the migration
+# (drizzle/0000_contacts.sql) via DATABASE_ADMIN_URL at startup.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localadmin
+      POSTGRES_DB: sivihub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sivihub"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:

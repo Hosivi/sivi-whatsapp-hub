@@ -14,12 +14,16 @@
   "dependencies": {
     "@hono/node-server": "^2.0.5",
     "@sivihub/contracts": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.12.26",
     "pino": "^10.3.1",
+    "postgres": "^3.4.9",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^12.0.3",
     "@types/node": "^22.15.29",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.4",
     "typescript": "~5.5.4",
     "vitest": "^3.2.4"
