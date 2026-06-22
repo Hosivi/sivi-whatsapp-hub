@@ -58,20 +58,20 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Dependencies, Config, and DB Foundation (Slice A)
 
-- [ ] 1.1 **[unit · RED]** Write `apps/backend/src/config/env.test.ts`: assert `loadEnv()` throws when `DATABASE_URL` is missing; assert it parses `AUTH_MODE` enum `['dev-header','jwt']`; assert `PORT` defaults to 3001.
+- [x] 1.1 **[unit · RED]** Write `apps/backend/src/config/env.test.ts`: assert `loadEnv()` throws when `DATABASE_URL` is missing; assert it parses `AUTH_MODE` enum `['dev-header','jwt']`; assert `PORT` defaults to 3001.
   _Spec: env validation fail-fast · Docker-free_
 
-- [ ] 1.2 **[GREEN]** Create `apps/backend/src/config/env.ts`: Zod schema for `DATABASE_URL`, `DATABASE_ADMIN_URL` (both required), `AUTH_MODE` enum, `PORT` (default 3001), `LOG_LEVEL` (default `'info'`); export `Env` type and `loadEnv()` that calls `.parse(process.env)`.
+- [x] 1.2 **[GREEN]** Create `apps/backend/src/config/env.ts`: Zod schema for `DATABASE_URL`, `DATABASE_ADMIN_URL` (both required), `AUTH_MODE` enum, `PORT` (default 3001), `LOG_LEVEL` (default `'info'`); export `Env` type and `loadEnv()` that calls `.parse(process.env)`.
   _Design: env validation fail-fast decision_
 
-- [ ] 1.3 Add runtime deps `drizzle-orm`, `postgres` and dev deps `drizzle-kit`, `@testcontainers/postgresql` to `apps/backend/package.json`; run `pnpm install` to update lockfile.
+- [x] 1.3 Add runtime deps `drizzle-orm`, `postgres` and dev deps `drizzle-kit`, `@testcontainers/postgresql` to `apps/backend/package.json`; run `pnpm install` to update lockfile.
 
-- [ ] 1.4 Create `apps/backend/drizzle.config.ts`: dialect `postgresql`, schema glob `./src/db/schema/*.schema.ts`, `out: ./drizzle`; credentials from `DATABASE_ADMIN_URL` env var.
+- [x] 1.4 Create `apps/backend/drizzle.config.ts`: dialect `postgresql`, schema glob `./src/db/schema/*.schema.ts`, `out: ./drizzle`; credentials from `DATABASE_ADMIN_URL` env var.
 
-- [ ] 1.5 Create `apps/backend/src/db/schema/contacts.schema.ts`: Drizzle `contacts` table with all 11 columns from spec (UUID PK, `tenant_id`, `phone_e164`, `full_name`, `source`, `tags text[]`, `intent`, `intent_confidence numeric(5,4)`, `created_at`, `updated_at`, `deleted_at`). Include `intent_confidence` CHECK (0–1). Export `Contact` domain type with camelCase fields; row mapper converts `intent_confidence` string → `number` via `Number()`.
+- [x] 1.5 Create `apps/backend/src/db/schema/contacts.schema.ts`: Drizzle `contacts` table with all 11 columns from spec (UUID PK, `tenant_id`, `phone_e164`, `full_name`, `source`, `tags text[]`, `intent`, `intent_confidence numeric(5,4)`, `created_at`, `updated_at`, `deleted_at`). Include `intent_confidence` CHECK (0–1). Export `Contact` domain type with camelCase fields; row mapper converts `intent_confidence` string → `number` via `Number()`.
   _Spec: Contacts Table Shape · Design: intent_confidence + updated_at decision_
 
-- [ ] 1.6 Run `pnpm drizzle-kit generate` to produce `apps/backend/drizzle/0000_contacts.sql` (base DDL), then hand-append RLS + role block:
+- [x] 1.6 Run `pnpm drizzle-kit generate` to produce `apps/backend/drizzle/0000_contacts.sql` (base DDL), then hand-append RLS + role block:
   ```sql
   ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
   ALTER TABLE contacts FORCE ROW LEVEL SECURITY;
@@ -86,21 +86,21 @@ Chain strategy: stacked-to-main
   ```
   _Spec: RLS Tenant Isolation Policy, app-role enforcement · Design: non-superuser app role decision_
 
-- [ ] 1.7 Create `apps/backend/src/db/client.ts`: export `TenantRunner`, `DbClient` types and `createDbClient(env: Env): DbClient`. The client opens two connections: `sql` via `DATABASE_URL` (connects as `app_rls`); `adminSql` via `DATABASE_ADMIN_URL` (privileged, migration only). `withTenant(tenantId, run)` uses `sql.begin` + `SELECT set_config('app.current_tenant', ${tenantId}, true)` then passes `drizzle(txSql)` to `run`. `adminSql` is NOT exposed to repositories.
+- [x] 1.7 Create `apps/backend/src/db/client.ts`: export `TenantRunner`, `DbClient` types and `createDbClient(env: Env): DbClient`. The client opens two connections: `sql` via `DATABASE_URL` (connects as `app_rls`); `adminSql` via `DATABASE_ADMIN_URL` (privileged, migration only). `withTenant(tenantId, run)` uses `db.transaction()` + `SET set_config('app.current_tenant', ${tenantId}, true)` (NOTE: uses db.transaction() not sql.begin+drizzle() — drizzle-orm v0.45 requires this). `adminSql` is NOT exposed to repositories.
   _Design: RLS transaction boundary — `withTenant` is the only path_
 
-- [ ] 1.8 Create `apps/backend/compose.yaml` (PG16 service, port 5432) and `apps/backend/.env.example` (with `DATABASE_URL=postgresql://app_rls:...@localhost:5432/...`, `DATABASE_ADMIN_URL=postgresql://postgres:...@localhost:5432/...`, `AUTH_MODE=dev-header`).
+- [x] 1.8 Create `apps/backend/compose.yaml` (PG16 service, port 5432). NOTE: `.env.example` skipped — dotfile Write permission denied on Windows.
 
-- [ ] 1.9 Modify `apps/backend/vitest.config.ts`: add `testTimeout: 60_000`, `hookTimeout: 120_000`, and extend `include` to match both `test/**/*.test.ts` and `test/**/*.int.test.ts`.
+- [x] 1.9 Modify `apps/backend/vitest.config.ts`: add `testTimeout: 60_000`, `hookTimeout: 120_000`, and extend `include` to match `src/**/*.test.ts`, `test/**/*.test.ts`, and `test/**/*.int.test.ts`.
 
 ---
 
 ## Phase 2: Test Helper + RLS RED→GREEN (Slice A, continued)
 
-- [ ] 2.1 Create `apps/backend/test/_helpers/test-db.ts`: `createTestDb()` starts `PostgreSQLContainer('postgres:16-alpine')`, connects as superuser via `adminSql` to run `drizzle/0000_contacts.sql` (creates table + policy + `app_rls` + grants), then returns `{ withTenant (app_rls-scoped client), seedTenant(id), truncate(), teardown() }`. The app_rls client connects with `DATABASE_URL`-equivalent pointing at the container.
+- [x] 2.1 Create `apps/backend/test/_helpers/test-db.ts`: `createTestDb()` starts `PostgreSQLContainer('postgres:16-alpine')`, connects as superuser via `adminSql` to run `drizzle/0000_contacts.sql` (creates table + policy + `app_rls` + grants), then returns `{ withTenant (app_rls-scoped client), seedTenant(id), truncate(), teardown() }`. The app_rls client connects with `DATABASE_URL`-equivalent pointing at the container.
   _Design: createTestDb() spec · Integration (Testcontainers)_
 
-- [ ] 2.2 **[int · RED]** Write `apps/backend/test/contacts/rls.int.test.ts` BEFORE the migration SQL exists in the container. Assert:
+- [x] 2.2 **[int · RED]** Write `apps/backend/test/contacts/rls.int.test.ts` BEFORE the migration SQL exists in the container. Assert:
   - (a) `withTenant(tenantA)` → `SELECT * FROM contacts` returns only tenant A rows, not tenant B.
   - (b) `withTenant(tenantA)` → INSERT with `tenant_id = tenantB` is rejected by `WITH CHECK`.
   - (c) Connected as `app_rls` (not superuser): RLS is enforced (not bypassed).
@@ -109,18 +109,18 @@ Chain strategy: stacked-to-main
   All five assertions MUST FAIL until 1.6 + 2.1 complete.
   _Spec: all RLS scenarios · Integration_
 
-- [ ] 2.3 **[GREEN]** Verify `rls.int.test.ts` passes after applying 1.6 + 2.1 (the migration SQL + `createTestDb()` with the `app_rls`-scoped client).
+- [x] 2.3 **[GREEN]** Verify `rls.int.test.ts` passes after applying 1.6 + 2.1 (the migration SQL + `createTestDb()` with the `app_rls`-scoped client).
 
-- [ ] 2.4 Verify `apps/backend/test/health.test.ts` still passes (the no-arg `buildApp()` path mounts only health — zero regression).
+- [x] 2.4 Verify `apps/backend/test/health.test.ts` still passes (the no-arg `buildApp()` path mounts only health — zero regression).
 
 ---
 
 ## Phase 3: Tenant Middleware (Slice A)
 
-- [ ] 3.1 **[unit · RED]** Write `apps/backend/src/http/tenant.middleware.test.ts`: mock Hono context; assert missing `X-Tenant-Id` → `401 { "error": "MISSING_TENANT" }`; non-UUID value → `400 { "error": "INVALID_TENANT_ID" }`; valid UUID → `c.set('tenantId', uuid)` and `next()` called.
+- [x] 3.1 **[unit · RED]** Write `apps/backend/src/http/tenant.middleware.test.ts`: mock Hono context; assert missing `X-Tenant-Id` → `401 { "error": "MISSING_TENANT" }`; non-UUID value → `400 { "error": "INVALID_TENANT_ID" }`; valid UUID → `c.set('tenantId', uuid)` and `next()` called.
   _Spec: Tenant Middleware scenarios · Docker-free_
 
-- [ ] 3.2 **[GREEN]** Create `apps/backend/src/http/tenant.middleware.ts`: `createTenantMiddleware(env: Env)` → Hono middleware. When `env.AUTH_MODE === 'dev-header'`: read `X-Tenant-Id` header; missing → 401; present but fails `z.string().uuid()` → 400; valid → `c.set('tenantId', id); await next()`. When `AUTH_MODE === 'jwt'` → 501 stub.
+- [x] 3.2 **[GREEN]** Create `apps/backend/src/http/tenant.middleware.ts`: `createTenantMiddleware(env: Env)` → Hono middleware. When `env.AUTH_MODE === 'dev-header'`: read `X-Tenant-Id` header; missing → 401; present but fails `z.string().uuid()` → 400; valid → `c.set('tenantId', id); await next()`. When `AUTH_MODE === 'jwt'` → 501 stub.
   _Design: tenant middleware boundary decision_
 
 ---
