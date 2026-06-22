@@ -1,0 +1,28 @@
+{
+  "name": "sivi-whatsapp-hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "WhatsApp contact capture and lead routing hub",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "vitest run && turbo test",
+    "test:smoke": "vitest run",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "lefthook": "^1.11.13",
+    "turbo": "^2.5.4",
+    "typescript": "~5.5.4",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome", "esbuild", "lefthook"]
+  }
+}

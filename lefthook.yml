@@ -1,0 +1,14 @@
+# Git hooks managed by lefthook.
+# pre-commit: lint + safe-fix ONLY the staged source files (never the whole repo,
+# never unsafe fixes — see biome.json `files.ignore` for excluded paths).
+pre-commit:
+  commands:
+    biome-check:
+      glob: "*.{js,jsx,ts,tsx,json,jsonc}"
+      run: pnpm exec biome check --write --staged --no-errors-on-unmatched
+      stage_fixed: true
+
+pre-push:
+  commands:
+    test:
+      run: pnpm turbo test
