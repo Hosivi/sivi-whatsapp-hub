@@ -53,6 +53,14 @@ export function resultToHttpStatus(error: ContactError): 422 | 409 | 404 | 500 {
 }
 
 // ---------------------------------------------------------------------------
+// ContactError → response body (DB_ERROR is surfaced as a generic INTERNAL_ERROR)
+// ---------------------------------------------------------------------------
+
+function errorBody(error: ContactError): { error: string } {
+  return { error: error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : error.code };
+}
+
+// ---------------------------------------------------------------------------
 // Zod body schemas
 // ---------------------------------------------------------------------------
 
@@ -95,7 +103,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     const parsed = createBodySchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: 'VALIDATION_ERROR', issues: parsed.error.issues }, 400);
+      return c.json({ error: 'VALIDATION_ERROR', details: parsed.error.issues }, 400);
     }
 
     const tenantId = c.get('tenantId');
@@ -104,7 +112,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = resultToHttpStatus(result.error);
-      return c.json({ error: result.error.code }, status);
+      return c.json(errorBody(result.error), status);
     }
     return c.json(result.value, 201);
   });
@@ -117,7 +125,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = resultToHttpStatus(result.error);
-      return c.json({ error: result.error.code }, status);
+      return c.json(errorBody(result.error), status);
     }
     return c.json({ data: result.value }, 200);
   });
@@ -131,7 +139,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = resultToHttpStatus(result.error);
-      return c.json({ error: result.error.code }, status);
+      return c.json(errorBody(result.error), status);
     }
     return c.json(result.value, 200);
   });
@@ -147,7 +155,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     const parsed = patchBodySchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: 'VALIDATION_ERROR', issues: parsed.error.issues }, 400);
+      return c.json({ error: 'VALIDATION_ERROR', details: parsed.error.issues }, 400);
     }
 
     const id = c.req.param('id');
@@ -157,7 +165,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = resultToHttpStatus(result.error);
-      return c.json({ error: result.error.code }, status);
+      return c.json(errorBody(result.error), status);
     }
     return c.json(result.value, 200);
   });
@@ -171,7 +179,7 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = resultToHttpStatus(result.error);
-      return c.json({ error: result.error.code }, status);
+      return c.json(errorBody(result.error), status);
     }
     return new Response(null, { status: 204 });
   });
