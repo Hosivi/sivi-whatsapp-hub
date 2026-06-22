@@ -7,7 +7,7 @@
 
 Pure-domain slice, zero runtime deps, zero I/O. Two source files plus one Vitest file, built test-first under Strict TDD. `result.ts` is the foundational, dependency-free primitive; `phone-e164.ts` imports it and holds the normalizer, batch report, and dedupe detector. No `Date`, no randomness, no DB/HTTP/Hono — every output is a deterministic function of its input. All decisions (Result shape, hand-rolled normalizer, error model, file locations) are FIXED by the proposal; this design only pins the HOW.
 
-> Deviation from proposal §3.4: the proposal sketched a separate `contact-dedupe.ts`. This design consolidates `detectPhoneDuplicates` + dedupe types INTO `phone-e164.ts` (3-file layout per task scope). Same single-responsibility functions, fewer files for a tiny slice. The split into `contact-dedupe.ts` is a mechanical follow-up if the file grows.
+> Deviation from proposal §3.4: the proposal sketched a separate `contact-dedupe.ts`. This design consolidates `detectPhoneDuplicates` + dedupe types INTO `phone-e164.ts` (3-file layout per task scope) instead of a separate contact-dedupe.ts. Same single-responsibility functions; split is a mechanical follow-up if the file grows.
 
 ## File Layout
 
