@@ -127,14 +127,14 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Contact Domain Types and Errors (Slice B setup)
 
-- [ ] 4.1 Create `apps/backend/src/contacts/contacts.errors.ts`: export `ContactError` discriminated union with codes `CONTACT_NOT_FOUND`, `CONTACT_ALREADY_EXISTS`, `INVALID_PHONE`, `DB_ERROR`. No throw — these are domain `Result` errors only.
+- [x] 4.1 Create `apps/backend/src/contacts/contacts.errors.ts`: export `ContactError` discriminated union with codes `CONTACT_NOT_FOUND`, `CONTACT_ALREADY_EXISTS`, `INVALID_PHONE`, `DB_ERROR`. No throw — these are domain `Result` errors only.
   _Spec: ContactsRepositoryError codes_
 
 ---
 
 ## Phase 5: Repository (Slice B)
 
-- [ ] 5.1 **[int · RED]** Write `apps/backend/test/contacts/contacts.repository.int.test.ts`: using `createTestDb()`, assert all repository scenarios from spec:
+- [x] 5.1 **[int · RED]** Write `apps/backend/test/contacts/contacts.repository.int.test.ts`: using `createTestDb()`, assert all repository scenarios from spec:
   - `create` happy path: phone normalizes, `phoneE164` stored as E.164, `deletedAt` is null.
   - `create` live-conflict → `err(CONTACT_ALREADY_EXISTS)`.
   - `create` soft-deleted phone → resurrect, same `id`, `deletedAt` null.
@@ -147,22 +147,22 @@ Chain strategy: stacked-to-main
   All assertions MUST FAIL before 5.2 exists.
   _Spec: all contacts-persistence scenarios · Integration_
 
-- [ ] 5.2 **[GREEN]** Create `apps/backend/src/contacts/contacts.repository.ts`: `createContactsRepository(withTenant: TenantRunner, tenantId: string): ContactsRepository`. All ops run inside `withTenant(tenantId, ...)`. No `WHERE tenant_id` in any query (RLS handles it). `create` implements explicit read-then-branch (SELECT → live=409 / soft-deleted=resurrect / absent=INSERT + catch `23505`→409). `softDelete` idempotency via existence read (SELECT → absent=404 / already-deleted=ok / live=UPDATE). `findById`/`list` filter `deleted_at IS NULL`. Row mapper converts `intent_confidence` string → `number`. `updated_at` is app-set (`new Date()`) on every write.
+- [x] 5.2 **[GREEN]** Create `apps/backend/src/contacts/contacts.repository.ts`: `createContactsRepository(withTenant: TenantRunner, tenantId: string): ContactsRepository`. All ops run inside `withTenant(tenantId, ...)`. No `WHERE tenant_id` in any query (RLS handles it). `create` implements explicit read-then-branch (SELECT → live=409 / soft-deleted=resurrect / absent=INSERT + catch `23505`→409). `softDelete` idempotency via existence read (SELECT → absent=404 / already-deleted=ok / live=UPDATE). `findById`/`list` filter `deleted_at IS NULL`. Row mapper converts `intent_confidence` string → `number`. `updated_at` is app-set (`new Date()`) on every write.
   _Design: create conflict + resurrect, softDelete idempotency, withTenant constraint_
 
-- [ ] 5.3 **[REFACTOR]** Verify no `WHERE tenant_id` leakage in `contacts.repository.ts`; confirm `adminSql` never appears in repository code; confirm every op is inside a `withTenant` call.
+- [x] 5.3 **[REFACTOR]** Verify no `WHERE tenant_id` leakage in `contacts.repository.ts`; confirm `adminSql` never appears in repository code; confirm every op is inside a `withTenant` call.
 
 ---
 
 ## Phase 6: HTTP Routes and Result→Response Mapper (Slice B)
 
-- [ ] 6.1 **[unit · RED]** Write `apps/backend/src/contacts/result-to-response.test.ts`: assert `resultToResponse` mapping table: `CONTACT_ALREADY_EXISTS`→409, `CONTACT_NOT_FOUND`→404, `INVALID_PHONE`→422, `DB_ERROR`→500; Zod body failure→400 (tested at route layer, not mapper).
+- [x] 6.1 **[unit · RED]** Write `apps/backend/src/contacts/result-to-response.test.ts`: assert `resultToResponse` mapping table: `CONTACT_ALREADY_EXISTS`→409, `CONTACT_NOT_FOUND`→404, `INVALID_PHONE`→422, `DB_ERROR`→500; Zod body failure→400 (tested at route layer, not mapper).
   _Spec: Result→HTTP Status Mapping · Docker-free_
 
-- [ ] 6.2 **[GREEN]** Create `apps/backend/src/contacts/contacts.route.ts`: `createContactsRoute(deps: { db: DbClient; env: Env })` returns a Hono router. Mount `tenantMiddleware` on all contact routes. For each route, parse body via Zod schema (400 on failure), construct repo via `createContactsRepository(db.withTenant, c.get('tenantId'))`, call repo op, pass result to `resultToResponse`. Routes: `POST /` → 201 + contact; `GET /` → 200 + `{ data: [...] }`; `GET /:id` → 200 + contact; `PATCH /:id` → 200 + contact; `DELETE /:id` → 204.
+- [x] 6.2 **[GREEN]** Create `apps/backend/src/contacts/contacts.route.ts`: `createContactsRoute(deps: { db: DbClient; env: Env })` returns a Hono router. Mount `tenantMiddleware` on all contact routes. For each route, parse body via Zod schema (400 on failure), construct repo via `createContactsRepository(db.withTenant, c.get('tenantId'))`, call repo op, pass result to `resultToResponse`. Routes: `POST /` → 201 + contact; `GET /` → 200 + `{ data: [...] }`; `GET /:id` → 200 + contact; `PATCH /:id` → 200 + contact; `DELETE /:id` → 204.
   _Spec: all contacts-crud-api scenarios · Design: Result→HTTP mapping_
 
-- [ ] 6.3 **[int · RED]** Write `apps/backend/test/contacts/contacts.route.int.test.ts`: using `createTestDb()` + `buildApp({ db, env })`, assert all HTTP scenarios from spec:
+- [x] 6.3 **[int · RED]** Write `apps/backend/test/contacts/contacts.route.int.test.ts`: using `createTestDb()` + `buildApp({ db, env })`, assert all HTTP scenarios from spec:
   - `POST /contacts` → 201; live phone → 409; invalid phone → 422; missing phone field → 400; missing tenant header → 401; non-UUID tenant → 400.
   - `GET /contacts` → 200 `{ data: [...] }`; empty → `{ data: [] }`.
   - `GET /contacts/:id` → 200; soft-deleted → 404; missing → 404.
@@ -175,15 +175,15 @@ Chain strategy: stacked-to-main
 
 ## Phase 7: Wiring and Boot (Slice B)
 
-- [ ] 7.1 Modify `apps/backend/src/app.ts`: extend `buildApp` signature to `buildApp(deps?: AppDeps)` where `AppDeps = { db: DbClient; env: Env }`. When `deps` is present, mount `createContactsRoute(deps)` under `/contacts`. When absent, mount only health (no regression to existing `health.test.ts`).
+- [x] 7.1 Modify `apps/backend/src/app.ts`: extend `buildApp` signature to `buildApp(deps?: AppDeps)` where `AppDeps = { db: DbClient; env: Env }`. When `deps` is present, mount `createContactsRoute(deps)` under `/contacts`. When absent, mount only health (no regression to existing `health.test.ts`).
   _Design: buildApp deps-optional pattern_
 
-- [ ] 7.2 Modify `apps/backend/src/main.ts`: call `loadEnv()`, `createDbClient(env)`, run migration via `client.adminSql` (execute `drizzle/0000_contacts.sql`), then `buildApp({ db: client, env })`. Register `close()` on `SIGTERM`/`SIGINT` (drain connections).
+- [x] 7.2 Modify `apps/backend/src/main.ts`: call `loadEnv()`, `createDbClient(env)`, run migration via `client.adminSql` (execute `drizzle/0000_contacts.sql`), then `buildApp({ db: client, env })`. Register `close()` on `SIGTERM`/`SIGINT` (drain connections).
   _Design: main.ts boot sequence_
 
-- [ ] 7.3 **[GREEN]** Verify `contacts.route.int.test.ts` passes (all HTTP status assertions from 6.3).
+- [x] 7.3 **[GREEN]** Verify `contacts.route.int.test.ts` passes (all HTTP status assertions from 6.3).
 
-- [ ] 7.4 **[REFACTOR + final sweep]** Run `pnpm test` (full suite): `health.test.ts`, `env.test.ts`, `tenant.middleware.test.ts`, `result-to-response.test.ts`, `rls.int.test.ts`, `contacts.repository.int.test.ts`, `contacts.route.int.test.ts` all green. Run `pnpm typecheck` + `pnpm lint`. Fix any type or lint errors.
+- [x] 7.4 **[REFACTOR + final sweep]** Run `pnpm test` (full suite): `health.test.ts`, `env.test.ts`, `tenant.middleware.test.ts`, `result-to-response.test.ts`, `rls.int.test.ts`, `contacts.repository.int.test.ts`, `contacts.route.int.test.ts` all green. Run `pnpm typecheck` + `pnpm lint`. Fix any type or lint errors.
 
 ---
 
