@@ -33,32 +33,36 @@ export type RowOutcome =
   | {
       readonly index: number;
       readonly input: ImportRow;
-      readonly status: 'imported';
+      readonly outcome: 'imported';
       readonly contactId: string;
     }
   | {
       readonly index: number;
       readonly input: ImportRow;
-      readonly status: 'resurrected';
+      readonly outcome: 'resurrected';
       readonly contactId: string;
     }
   | {
       readonly index: number;
       readonly input: ImportRow;
-      readonly status: 'skipped-invalid-phone';
+      readonly outcome: 'skipped-invalid-phone';
       readonly reason: PhoneNormalizationErrorCode;
     }
   | {
       readonly index: number;
       readonly input: ImportRow;
-      readonly status: 'skipped-duplicate-in-batch';
+      readonly outcome: 'skipped-duplicate-in-batch';
       readonly canonicalRowIndex: number;
     }
-  | { readonly index: number; readonly input: ImportRow; readonly status: 'skipped-already-exists' }
   | {
       readonly index: number;
       readonly input: ImportRow;
-      readonly status: 'error';
+      readonly outcome: 'skipped-already-exists';
+    }
+  | {
+      readonly index: number;
+      readonly input: ImportRow;
+      readonly outcome: 'error';
       readonly code: 'DB_ERROR';
     };
 
@@ -109,7 +113,7 @@ export const importContacts = async (
       outcomes.push({
         index: i,
         input: inputRow,
-        status: 'skipped-invalid-phone',
+        outcome: 'skipped-invalid-phone',
         reason: normalResult.error.code,
       });
       continue;
@@ -123,7 +127,7 @@ export const importContacts = async (
       outcomes.push({
         index: i,
         input: inputRow,
-        status: 'skipped-duplicate-in-batch',
+        outcome: 'skipped-duplicate-in-batch',
         canonicalRowIndex: canonical ?? i,
       });
       continue;
@@ -139,28 +143,28 @@ export const importContacts = async (
       const resurrected = contact.createdAt.getTime() < contact.updatedAt.getTime();
       outcomes.push(
         resurrected
-          ? { index: i, input: inputRow, status: 'resurrected', contactId: contact.id }
-          : { index: i, input: inputRow, status: 'imported', contactId: contact.id },
+          ? { index: i, input: inputRow, outcome: 'resurrected', contactId: contact.id }
+          : { index: i, input: inputRow, outcome: 'imported', contactId: contact.id },
       );
     } else {
       switch (createResult.error.code) {
         case 'CONTACT_ALREADY_EXISTS':
-          outcomes.push({ index: i, input: inputRow, status: 'skipped-already-exists' });
+          outcomes.push({ index: i, input: inputRow, outcome: 'skipped-already-exists' });
           break;
         case 'INVALID_PHONE':
           outcomes.push({
             index: i,
             input: inputRow,
-            status: 'skipped-invalid-phone',
+            outcome: 'skipped-invalid-phone',
             reason: 'INVALID_FORMAT',
           });
           break;
         case 'DB_ERROR':
-          outcomes.push({ index: i, input: inputRow, status: 'error', code: 'DB_ERROR' });
+          outcomes.push({ index: i, input: inputRow, outcome: 'error', code: 'DB_ERROR' });
           break;
         case 'CONTACT_NOT_FOUND':
           // create() never returns CONTACT_NOT_FOUND — defensive fallthrough
-          outcomes.push({ index: i, input: inputRow, status: 'error', code: 'DB_ERROR' });
+          outcomes.push({ index: i, input: inputRow, outcome: 'error', code: 'DB_ERROR' });
           break;
       }
     }
@@ -174,8 +178,8 @@ export const importContacts = async (
   let skippedAlreadyExists = 0;
   let errors = 0;
 
-  for (const outcome of outcomes) {
-    switch (outcome.status) {
+  for (const row of outcomes) {
+    switch (row.outcome) {
       case 'imported':
         imported++;
         break;

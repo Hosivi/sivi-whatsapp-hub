@@ -145,14 +145,14 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
       expect(r).toBeDefined();
       if (!r) continue;
       expect(r.index).toBe(i);
-      expect(r.status).toBe('imported');
+      expect(r.outcome).toBe('imported');
       // Each row echoes input
       expect(r.input).toBeDefined();
     }
 
     // contactId present for imported
     const r0 = report.rows[0];
-    expect(r0?.status === 'imported' && r0.contactId).toBeTruthy();
+    expect(r0?.outcome === 'imported' && r0.contactId).toBeTruthy();
   });
 
   it('2. empty phone → skipped-invalid-phone EMPTY_INPUT; malformed → INVALID_FORMAT; surrounding valid rows still imported', async () => {
@@ -170,14 +170,14 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.summary.skippedInvalidPhone).toBe(2);
 
     const r1 = report.rows[1];
-    expect(r1?.status).toBe('skipped-invalid-phone');
-    if (r1?.status === 'skipped-invalid-phone') {
+    expect(r1?.outcome).toBe('skipped-invalid-phone');
+    if (r1?.outcome === 'skipped-invalid-phone') {
       expect(r1.reason).toBe('EMPTY_INPUT');
     }
 
     const r3 = report.rows[3];
-    expect(r3?.status).toBe('skipped-invalid-phone');
-    if (r3?.status === 'skipped-invalid-phone') {
+    expect(r3?.outcome).toBe('skipped-invalid-phone');
+    if (r3?.outcome === 'skipped-invalid-phone') {
       expect(r3.reason).toBe('INVALID_FORMAT');
     }
 
@@ -200,12 +200,12 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.summary.skippedDuplicateInBatch).toBe(1);
 
     const r0 = report.rows[0];
-    expect(r0?.status).toBe('imported');
+    expect(r0?.outcome).toBe('imported');
     expect(r0?.index).toBe(0);
 
     const r1 = report.rows[1];
-    expect(r1?.status).toBe('skipped-duplicate-in-batch');
-    if (r1?.status === 'skipped-duplicate-in-batch') {
+    expect(r1?.outcome).toBe('skipped-duplicate-in-batch');
+    if (r1?.outcome === 'skipped-duplicate-in-batch') {
       expect(r1.canonicalRowIndex).toBe(0);
     }
     expect(r1?.index).toBe(1);
@@ -225,7 +225,7 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.summary.imported).toBe(0);
 
     const r0 = report.rows[0];
-    expect(r0?.status).toBe('skipped-already-exists');
+    expect(r0?.outcome).toBe('skipped-already-exists');
     expect(r0?.index).toBe(0);
   });
 
@@ -240,8 +240,8 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.summary.imported).toBe(0);
 
     const r0 = report.rows[0];
-    expect(r0?.status).toBe('resurrected');
-    if (r0?.status === 'resurrected') {
+    expect(r0?.outcome).toBe('resurrected');
+    if (r0?.outcome === 'resurrected') {
       expect(typeof r0.contactId).toBe('string');
     }
   });
@@ -260,13 +260,13 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.summary.imported).toBe(1);
 
     const r0 = report.rows[0];
-    expect(r0?.status).toBe('error');
-    if (r0?.status === 'error') {
+    expect(r0?.outcome).toBe('error');
+    if (r0?.outcome === 'error') {
       expect(r0.code).toBe('DB_ERROR');
     }
 
     const r1 = report.rows[1];
-    expect(r1?.status).toBe('imported');
+    expect(r1?.outcome).toBe('imported');
   });
 
   it('7. mixed batch (all 6 outcomes) → full summary tally equals total; rows preserve original index; each row echoes input', async () => {
@@ -331,11 +331,11 @@ describe('importContacts — unit (fake repo, Docker-free)', () => {
     expect(report.rows[3]?.input.phone).toBe('955555555');
 
     // Status assertions
-    expect(report.rows[0]?.status).toBe('skipped-invalid-phone');
-    expect(report.rows[1]?.status).toBe('skipped-already-exists');
-    expect(report.rows[2]?.status).toBe('resurrected');
-    expect(report.rows[3]?.status).toBe('imported');
-    expect(report.rows[4]?.status).toBe('skipped-duplicate-in-batch');
-    expect(report.rows[5]?.status).toBe('error');
+    expect(report.rows[0]?.outcome).toBe('skipped-invalid-phone');
+    expect(report.rows[1]?.outcome).toBe('skipped-already-exists');
+    expect(report.rows[2]?.outcome).toBe('resurrected');
+    expect(report.rows[3]?.outcome).toBe('imported');
+    expect(report.rows[4]?.outcome).toBe('skipped-duplicate-in-batch');
+    expect(report.rows[5]?.outcome).toBe('error');
   });
 });

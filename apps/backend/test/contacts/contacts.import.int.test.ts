@@ -117,7 +117,7 @@ describe('POST /contacts/import — happy path', () => {
       if (!r) continue;
       expect(r.index).toBe(i);
       expect(typeof r.contactId).toBe('string');
-      expect(r.outcome ?? r.status).toBe('imported');
+      expect(r.outcome).toBe('imported');
       expect(r.input).toBeDefined();
     }
   });
@@ -139,9 +139,9 @@ describe('POST /contacts/import — within-batch duplicate', () => {
 
     const rows = b.rows as Array<Record<string, unknown>>;
     const r0 = rows[0];
-    expect(r0?.status ?? r0?.outcome).toBe('imported');
+    expect(r0?.outcome).toBe('imported');
     const r1 = rows[1];
-    expect(r1?.status ?? r1?.outcome).toBe('skipped-duplicate-in-batch');
+    expect(r1?.outcome).toBe('skipped-duplicate-in-batch');
     expect(r1?.canonicalRowIndex).toBe(0);
 
     // DB must have exactly ONE contact row for this phone
@@ -170,7 +170,7 @@ describe('POST /contacts/import — invalid phone', () => {
     const rows = body.rows as Array<Record<string, unknown>>;
     const summary = body.summary as Record<string, unknown>;
 
-    expect(rows[0]?.status ?? rows[0]?.outcome).toBe('skipped-invalid-phone');
+    expect(rows[0]?.outcome).toBe('skipped-invalid-phone');
     expect(summary.skippedInvalidPhone).toBe(1);
     expect(summary.imported).toBe(1);
   });
@@ -250,7 +250,7 @@ describe('POST /contacts/import — resurrect', () => {
     expect(r0).toBeDefined();
     if (!r0) return;
 
-    expect(r0.status ?? r0.outcome).toBe('resurrected');
+    expect(r0.outcome).toBe('resurrected');
     // contactId MUST equal the original id (same DB row, not a new one)
     expect(r0.contactId).toBe(originalId);
 
