@@ -45,11 +45,12 @@ import type { TenantRunner } from '../../src/db/client.js';
 import { contactsTable } from '../../src/db/schema/contacts.schema.js';
 
 // ---------------------------------------------------------------------------
-// Path to the migration SQL file
+// Migration files — applied in order on the fresh container
 // ---------------------------------------------------------------------------
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const MIGRATION_SQL_PATH = join(__dirname, '../../drizzle/0000_contacts.sql');
+const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql'] as const;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -63,7 +64,10 @@ export type TestDb = {
   /** Raw app_rls connection string (for direct-client tests). */
   readonly appRlsConnectionString: string;
   /** Insert a contact row for the given tenant directly (bypasses RLS via adminSql). */
-  seedTenant(tenantId: string, data: { phoneE164: string; fullName?: string }): Promise<void>;
+  seedTenant(
+    tenantId: string,
+    data: { phoneE164: string; fullName?: string | null; routedAt?: Date | null },
+  ): Promise<void>;
   /** Truncate the contacts table (admin bypasses RLS). */
   truncate(): Promise<void>;
   /** Stop the container and close all connections. */
@@ -89,13 +93,14 @@ export async function createTestDb(): Promise<TestDb> {
   const adminSql = postgres(adminConnectionString, { max: 2 });
   const adminDb = drizzle(adminSql);
 
-  // Read and run the migration SQL.
-  // The migration includes: table DDL, indexes, RLS (with missing_ok=true),
-  // CREATE ROLE app_rls (with LITERAL password 'testpassword'), and GRANTs.
-  const migrationSql = readFileSync(MIGRATION_SQL_PATH, 'utf-8');
-
-  // Run migration — use unsafe() for multi-statement DDL
-  await adminSql.unsafe(migrationSql);
+  // Apply migrations in order: 0000 first (creates role + base grants),
+  // 0001 second (adds routed_at + outbox table + outbox grants).
+  // Raw SQL executed as superuser — no makeIdempotent needed (0001 has no role line;
+  // 0000 uses a LITERAL 'testpassword' which is correct for the test path).
+  for (const file of MIGRATION_FILES) {
+    const sqlText = readFileSync(join(MIGRATIONS_DIR, file), 'utf-8');
+    await adminSql.unsafe(sqlText);
+  }
 
   // 4. Build app_rls connection string (same host/port/db, different role)
   const { hostname, port, pathname } = new URL(adminConnectionString);
@@ -126,12 +131,14 @@ export async function createTestDb(): Promise<TestDb> {
         tenantId,
         phoneE164: data.phoneE164,
         fullName: data.fullName ?? null,
+        ...(data.routedAt !== undefined ? { routedAt: data.routedAt } : {}),
       });
     },
 
     async truncate() {
-      // Truncate via admin (superuser) bypasses RLS.
-      await adminSql`TRUNCATE TABLE contacts RESTART IDENTITY CASCADE`;
+      // Truncate both tables via admin (superuser) bypasses RLS.
+      // Order: outbox first (no FK, but good habit), then contacts.
+      await adminSql`TRUNCATE TABLE contact_lead_outbox, contacts RESTART IDENTITY CASCADE`;
     },
 
     async teardown() {

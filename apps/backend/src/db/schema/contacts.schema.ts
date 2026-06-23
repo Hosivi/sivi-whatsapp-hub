@@ -57,6 +57,7 @@ export const contactsTable = pgTable(
       .notNull()
       .default(sql`now()`),
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'date' }),
+    routedAt: timestamp('routed_at', { withTimezone: true, mode: 'date' }), // nullable; NULL = not yet routed
   },
   (t) => [
     // Partial unique index: enforces uniqueness only on live (non-deleted) rows.
@@ -86,6 +87,7 @@ export type Contact = {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly deletedAt: Date | null;
+  readonly routedAt: Date | null;
 };
 
 /**
@@ -104,4 +106,5 @@ export const mapRowToContact = (row: typeof contactsTable.$inferSelect): Contact
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
   deletedAt: row.deletedAt ?? null,
+  routedAt: row.routedAt ?? null,
 });

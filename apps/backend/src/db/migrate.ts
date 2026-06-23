@@ -35,7 +35,9 @@ import type { Env } from '../config/env.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Relative to compiled output: apps/backend/dist/db/migrate.js → ../../drizzle/
-const MIGRATION_SQL_PATH = join(__dirname, '../../drizzle/0000_contacts.sql');
+// Ordered list of migration files. Applied in array order. APPEND new files here.
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql'] as const;
+const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 
 /**
  * Replaces the bare CREATE ROLE line with an idempotent DO block.
@@ -72,10 +74,15 @@ export async function runMigration(env: Env): Promise<void> {
   const adminSql = postgres(env.DATABASE_ADMIN_URL, { max: 1 });
 
   try {
-    const raw = readFileSync(MIGRATION_SQL_PATH, 'utf-8');
-    const idempotent = makeIdempotent(raw, appRlsPassword);
-    await adminSql.unsafe(idempotent);
-    console.info('[migrate] migration applied successfully');
+    for (const file of MIGRATION_FILES) {
+      const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf-8');
+      // makeIdempotent rewrites the bare `CREATE ROLE app_rls` line (0000 only).
+      // For 0001 and later files that lack this line, it is a no-op (regex finds nothing).
+      const idempotent = makeIdempotent(raw, appRlsPassword);
+      await adminSql.unsafe(idempotent);
+      console.info(`[migrate] applied ${file}`);
+    }
+    console.info('[migrate] all migrations applied successfully');
   } finally {
     await adminSql.end();
   }
