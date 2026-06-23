@@ -24,6 +24,7 @@ import type { Env } from '../config/env.js';
 import type { DbClient } from '../db/client.js';
 import { createTenantMiddleware } from '../http/tenant.middleware.js';
 import type { ContactError } from './contacts.errors.js';
+import { importContacts } from './contacts.import.js';
 import { createContactsRepository } from './contacts.repository.js';
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,13 @@ const patchBodySchema = z.object({
   intentConfidence: z.number().min(0).max(1).nullable().optional(),
 });
 
+// Reuse the per-row schema from createBodySchema — single source of truth.
+// importRowSchema IS createBodySchema; no new fields, no drift between POST / and POST /import.
+const importRowSchema = createBodySchema;
+const importBodySchema = z.object({
+  contacts: z.array(importRowSchema).min(1).max(200),
+});
+
 // ---------------------------------------------------------------------------
 // Route factory
 // ---------------------------------------------------------------------------
@@ -91,6 +99,28 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
   // Apply tenant middleware to all routes in this router
   router.use('*', tenantMiddleware);
+
+  // POST /import — bulk import (STATIC path; must be registered BEFORE any /:id dynamic handler)
+  router.post('/import', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400);
+    }
+
+    const parsed = importBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'VALIDATION_ERROR', details: parsed.error.issues }, 400);
+    }
+
+    const tenantId = c.get('tenantId');
+    const repo = createContactsRepository(deps.db.withTenant, tenantId);
+    const report = await importContacts(repo, parsed.data.contacts);
+
+    const status: 200 | 500 = report.summary.errors > 0 ? 500 : 200;
+    return c.json(report, status);
+  });
 
   // POST / — create
   router.post('/', async (c) => {
