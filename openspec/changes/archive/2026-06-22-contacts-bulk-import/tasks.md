@@ -65,7 +65,7 @@ Chain strategy: pending
     5. Soft-deleted phone → `resurrected` with `contactId`; `summary.resurrected === 1`.
     6. DB_ERROR phone → row `status: 'error'` with `code: 'DB_ERROR'`; `summary.errors === 1`; remaining rows still processed (processing does NOT abort).
     7. Mixed batch (all 6 outcomes in one call) → full `summary` tally adds up to `total`; `rows` array preserves original index order; each row echoes `input`.
-  - All 7 tests MUST be RED (failing) at this point.
+  - All 7 tests MUST be RED at this point.
 - [x] 3.2 **GREEN** — Implement `importContacts` in `contacts.import.ts`:
   - Running `Set<string>` + `Map<string, number>` for in-batch dedup (NOT `detectPhoneDuplicates`).
   - Per-row pipeline (§5 of design): normalize → dedup → `repo.create` → map result.
