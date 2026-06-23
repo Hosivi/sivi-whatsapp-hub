@@ -26,6 +26,8 @@ import { createTenantMiddleware } from '../http/tenant.middleware.js';
 import type { ContactError } from './contacts.errors.js';
 import { importContacts } from './contacts.import.js';
 import { createContactsRepository } from './contacts.repository.js';
+import type { ContactRoutingError } from './contacts.routing.errors.js';
+import { routeContact } from './contacts.routing.js';
 
 // ---------------------------------------------------------------------------
 // Deps
@@ -59,6 +61,22 @@ export function resultToHttpStatus(error: ContactError): 422 | 409 | 404 | 500 {
 
 function errorBody(error: ContactError): { error: string } {
   return { error: error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : error.code };
+}
+
+// ---------------------------------------------------------------------------
+// ContactRoutingError → HTTP status (routing-specific, exhaustive, separate from CRUD)
+// ADR-2: dedicated mapper keeps the switch exhaustive over exactly these 3 codes.
+// ---------------------------------------------------------------------------
+
+function routingErrorToHttpStatus(error: ContactRoutingError): 404 | 422 | 500 {
+  switch (error.code) {
+    case 'CONTACT_NOT_FOUND':
+      return 404;
+    case 'MISSING_FULL_NAME':
+      return 422;
+    case 'DB_ERROR':
+      return 500;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +138,23 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     const status: 200 | 500 = report.summary.errors > 0 ? 500 : 200;
     return c.json(report, status);
+  });
+
+  // POST /:id/route — mark contact as routed + emit ContactLead to outbox (atomic).
+  // MUST be registered BEFORE any dynamic /:id handler so Hono's first-match routing
+  // resolves to this static /route segment, not the /:id wildcard.
+  router.post('/:id/route', async (c) => {
+    const id = c.req.param('id');
+    const tenantId = c.get('tenantId');
+    const result = await routeContact(deps.db.withTenant, tenantId, id);
+    if (!result.ok) {
+      const status = routingErrorToHttpStatus(result.error);
+      const body = {
+        error: result.error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : result.error.code,
+      };
+      return c.json(body, status as 404 | 422 | 500);
+    }
+    return c.json({ routed: result.value }, 200 as const);
   });
 
   // POST / — create
