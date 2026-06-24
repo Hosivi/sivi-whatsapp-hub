@@ -53,7 +53,7 @@ export type DbClient = {
   /**
    * Resolves tenant_id from phone_number_id using the low-privilege app_webhook handle.
    * Queries EXPLICIT columns (phone_number_id, tenant_id) — never SELECT *.
-   * Returns ok(tenantId) if a live row exists; err(UNKNOWN_PHONE_NUMBER_ID) otherwise.
+   * Returns ok(tenantId) if a row exists for phone_number_id; err(UNKNOWN_PHONE_NUMBER_ID) otherwise.
    * lookupSql is PRIVATE — not exposed on DbClient.
    */
   resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
@@ -90,7 +90,10 @@ export const createDbClient = (env: Env): DbClient => {
    * Resolves tenant_id from phone_number_id using the app_webhook (low-privilege) handle.
    * Selects EXPLICIT columns — NEVER SELECT * (column grant restricts to phone_number_id,
    * tenant_id only; SELECT * would fail with permission denied).
-   * Filters live rows (deleted_at IS NULL) to avoid resolving deactivated accounts.
+   * NOTE: does NOT yet filter deleted_at (the app_webhook column grant does not expose it).
+   * Safe today — no account soft-delete/deactivation flow exists, and the partial-unique index
+   * (phone_number_id WHERE deleted_at IS NULL) allows only one live row per number. TODO: filter
+   * deleted_at (and grant the column to app_webhook) before account deactivation ships.
    */
   const resolveTenant = async (
     phoneNumberId: string,
