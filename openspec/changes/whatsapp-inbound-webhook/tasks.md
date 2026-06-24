@@ -84,63 +84,63 @@ Chain strategy: stacked-to-main
 
 ### 2.1 — Error union
 
-- [ ] 2.1 Create `apps/backend/src/webhooks/whatsapp.errors.ts`: export `WhatsappWebhookError = { code: 'BAD_SIGNATURE' } | { code: 'UNKNOWN_PHONE_NUMBER_ID' } | { code: 'NO_MESSAGES' } | { code: 'INVALID_PHONE' } | { code: 'DB_ERROR'; cause?: unknown }`. All variants map to HTTP 200. No throws escape.
+- [x] 2.1 Create `apps/backend/src/webhooks/whatsapp.errors.ts`: export `WhatsappWebhookError = { code: 'BAD_SIGNATURE' } | { code: 'UNKNOWN_PHONE_NUMBER_ID' } | { code: 'NO_MESSAGES' } | { code: 'INVALID_PHONE' } | { code: 'DB_ERROR'; cause?: unknown }`. All variants map to HTTP 200. No throws escape.
 
 ### 2.2 — Route + Service (RED → GREEN — all 22 spec scenarios)
 
-- [ ] 2.2 **[RED — GET handshake]** Write integration tests in `apps/backend/test/webhooks/whatsapp.route.int.test.ts`:
+- [x] 2.2 **[RED — GET handshake]** Write integration tests in `apps/backend/test/webhooks/whatsapp.route.int.test.ts`:
   - Spec §GET: valid `hub.mode=subscribe` + matching `hub.verify_token` → 200 + plain-text `hub.challenge`. (Scenario: valid subscribe)
   - Spec §GET: wrong `hub.verify_token` → 403. (Scenario: wrong token)
   - Spec §GET: absent `hub.verify_token` → 403. (Scenario: absent token)
   Run → RED.
-- [ ] 2.3 Create `apps/backend/src/webhooks/whatsapp.route.ts`: `createWhatsappWebhookRoute(deps)` — Hono sub-router, NO tenant middleware. `GET`: read `hub.mode`, `hub.verify_token`, `hub.challenge`; if mode === `'subscribe'` and token matches `env.WHATSAPP_VERIFY_TOKEN` → `c.text(challenge, 200)`; else `c.text('Forbidden', 403)`. POST handler delegating to `handleInboundMessage` (stub until 2.5). Run GET tests → GREEN.
-- [ ] 2.4 **[RED — signature verification]** Add tests:
+- [x] 2.3 Create `apps/backend/src/webhooks/whatsapp.route.ts`: `createWhatsappWebhookRoute(deps)` — Hono sub-router, NO tenant middleware. `GET`: read `hub.mode`, `hub.verify_token`, `hub.challenge`; if mode === `'subscribe'` and token matches `env.WHATSAPP_VERIFY_TOKEN` → `c.text(challenge, 200)`; else `c.text('Forbidden', 403)`. POST handler delegating to `handleInboundMessage` (stub until 2.5). Run GET tests → GREEN.
+- [x] 2.4 **[RED — signature verification]** Add tests:
   - Spec §POST-sig: valid `X-Hub-Signature-256` computed with global `WHATSAPP_APP_SECRET` → processing continues (no 200 from sig fail path). (Scenario: valid signature)
   - Spec §POST-sig: incorrect HMAC → 200, zero `whatsapp_messages` rows, event logged. (Scenario: bad signature)
   - Spec §POST-sig: absent header → 200, zero rows. (Scenario: absent signature)
   - Spec §POST-sig: length-mismatch on buffers MUST NOT throw out of handler (wrap in try/catch). (Spec: timingSafeEqual length guard)
   - Spec §raw-body: raw body read BEFORE JSON parse (arrayBuffer first). Run → RED.
-- [ ] 2.5 Create `apps/backend/src/webhooks/whatsapp.service.ts`: `handleInboundMessage(deps, rawBody, sigHeader)` → `resolveSignature(rawBuffer, sigHeader, appSecret)` pure fn (strip `sha256=`, length-check, `timingSafeEqual` in try/catch → never throws out) → Zod parse → if no `value.messages` → `err({ code: 'NO_MESSAGES' })` → extract `phone_number_id` → `deps.db.resolveTenant(phoneNumberId)` → `normalizePhoneE164(waId)` → `withTenant(tenantId, tx => upsertContactTx + INSERT … ON CONFLICT (wamid) DO NOTHING)` → `ok({ wamid, contactId })`. Route POST maps ALL errors to 200 (ack-fast). Run signature tests → GREEN.
-- [ ] 2.6 **[RED — Zod parse]** Add tests:
+- [x] 2.5 Create `apps/backend/src/webhooks/whatsapp.service.ts`: `handleInboundMessage(deps, rawBody, sigHeader)` → `resolveSignature(rawBuffer, sigHeader, appSecret)` pure fn (strip `sha256=`, length-check, `timingSafeEqual` in try/catch → never throws out) → Zod parse → if no `value.messages` → `err({ code: 'NO_MESSAGES' })` → extract `phone_number_id` → `deps.db.resolveTenant(phoneNumberId)` → `normalizePhoneE164(waId)` → `withTenant(tenantId, tx => upsertContactTx + INSERT … ON CONFLICT (wamid) DO NOTHING)` → `ok({ wamid, contactId })`. Route POST maps ALL errors to 200 (ack-fast). Run signature tests → GREEN.
+- [x] 2.6 **[RED — Zod parse]** Add tests:
   - Spec §Zod: malformed JSON (correctly signed) → 200, zero rows, logged. (Scenario: malformed JSON)
   - Spec §Zod: valid JSON but wrong structure (no `entry` array) → 200, zero rows. (Scenario: Zod-invalid structure)
   Run → RED. Implement Zod schema for Meta payload in service. Run → GREEN.
-- [ ] 2.7 **[RED — status-only skip]** Add test:
+- [x] 2.7 **[RED — status-only skip]** Add test:
   - Spec §status-skip: correctly signed POST where `value.statuses: [...]` and no `value.messages` → 200, zero rows, no contact upsert. (Scenario: status-only event)
   Run → RED. Ensure `NO_MESSAGES` branch returns before resolution. Run → GREEN.
-- [ ] 2.8 **[RED — tenant resolution]** Add tests:
+- [x] 2.8 **[RED — tenant resolution]** Add tests:
   - Spec §resolve: known `phone_number_id` → `ok(tenantId)`. (Scenario: known phone resolves)
   - Spec §resolve: unknown `phone_number_id = '99999'` → 200, zero rows, logged, no contact upsert. (Scenario: unknown phone_number_id)
   Run → RED. Wire `resolveTenant` into service. Run → GREEN.
-- [ ] 2.9 **[RED — phone normalization + contact upsert]** Add tests:
+- [x] 2.9 **[RED — phone normalization + contact upsert]** Add tests:
   - Spec §upsert: new Peru `wa_id = '51987654321'` → contact inserted with `source='whatsapp'`, `whatsapp_messages` row with `contact_id` NOT NULL. (Scenario: new Peru wa_id)
   - Spec §upsert: LIVE contact already exists for `phone_e164 = '+51987654321'` → `upsertContactTx` returns `ok(existingContact)`, message row with `contact_id = existingContact.id`. (Scenario: existing live contact reused)
   - Spec §upsert: non-Peru `wa_id = '1234567890'` → 200, no row in `contacts`, no row in `whatsapp_messages`, logged. (Scenario: non-Peru wa_id)
   Run → RED. Wire `normalizePhoneE164` + `upsertContactTx` in service. Run → GREEN.
-- [ ] 2.10 **[RED — idempotent wamid]** Add tests:
+- [x] 2.10 **[RED — idempotent wamid]** Add tests:
   - Spec §idempotent: first delivery → exactly one `whatsapp_messages` row for `wamid='wamid_abc'`. (Scenario: first delivery)
   - Spec §idempotent: re-delivery of same `wamid` → still exactly one row, no error, 200. (Scenario: re-delivery, ON CONFLICT DO NOTHING)
   Run → RED. Confirm INSERT uses `ON CONFLICT (wamid) DO NOTHING`. Run → GREEN.
-- [ ] 2.11 **[RED — happy path E2E]** Add test:
+- [x] 2.11 **[RED — happy path E2E]** Add test:
   - Spec §happy-path: known `phone_number_id='111'`, signed POST, Peru `from='51987654321'`, `wamid='wamid_001'` → 200, contact exists/reused under tenant A, exactly one `whatsapp_messages` row with `contact_id` NOT NULL, `raw_payload` contains original message object. No `WHERE tenant_id` in queries — RLS via `withTenant` only. (Scenario: valid signed POST full persistence)
   Run → RED → GREEN.
-- [ ] 2.12 **[RED — DB error resilience]** Add test:
+- [x] 2.12 **[RED — DB error resilience]** Add test:
   - Spec §db-error: force a DB failure during the transaction (constraint violation on insert) → 200, no `whatsapp_messages` row for `wamid`, no orphaned contact, error logged. (Scenario: DB error, tx rollback)
   Run → RED → GREEN.
-- [ ] 2.13 **[RED — tenant isolation on messages]** Add tests:
+- [x] 2.13 **[RED — tenant isolation on messages]** Add tests:
   - Spec §isolation: message stored under tenant A → queried as `app_rls` with tenant B GUC → zero rows; queried as tenant A → row visible. (Scenario: tenant A message invisible to tenant B)
   - RLS: `app_webhook` cannot SELECT on `whatsapp_messages` (permission denied). (Spec §app_webhook role boundary)
   Run → RED → GREEN.
-- [ ] 2.14 **[RED — contacts.create() no-regression]** Add test (if not already in 1.12):
+- [x] 2.14 **[RED — contacts.create() no-regression]** Add test (if not already in 1.12):
   - `contacts.create()` with a live duplicate still returns `err({ code: 'CONTACT_ALREADY_EXISTS' })` — existing contacts integration tests must stay GREEN after `upsertContactTx` extraction. (Spec §upsertContactTx, zero CRUD regression)
   Run → RED → GREEN.
-- [ ] 2.15 **[RED — makeIdempotent 2-arg callers no-regression (N1)]** Confirm (compile-only) that `apps/backend/test/db/migrate.int.test.ts:35` and `apps/backend/test/db/migrate.routing.int.test.ts:44,117` still compile without the 3rd arg and produce no TS error. Run `tsc --noEmit` → must be GREEN.
-- [ ] 2.16 **[RED — route isolation]** Add test:
+- [x] 2.15 **[RED — makeIdempotent 2-arg callers no-regression (N1)]** Confirm (compile-only) that `apps/backend/test/db/migrate.int.test.ts:35` and `apps/backend/test/db/migrate.routing.int.test.ts:44,117` still compile without the 3rd arg and produce no TS error. Run `tsc --noEmit` → must be GREEN.
+- [x] 2.16 **[RED — route isolation]** Add test:
   - `POST /webhooks/whatsapp` is mounted WITHOUT tenant middleware; `POST /contacts` remains unaffected. Confirm `contacts.route.ts` has zero imports from `webhooks/`. (Spec §route isolation)
 
 ### 2.3 — PR 2 static analysis + final gate
 
-- [ ] 2.17 Run `tsc --noEmit` across `apps/backend` — fix all type errors introduced in Phase 2 (ack-fast 200 return types, `Result` exhaustiveness, Zod inferred types).
-- [ ] 2.18 Run `biome check --write` on Phase 2 changed files only — fix lint/format. Stage only Slice 2 files.
-- [ ] 2.19 Run `pnpm test` from repo root — all existing tests GREEN + all Phase 1 + Phase 2 tests GREEN. No regression in `contacts`, `routing`, or `migrate` suites.
-- [ ] 2.20 Commit with `feat(whatsapp): inbound webhook — handshake, HMAC, upsert, idempotent persist`.
+- [x] 2.17 Run `tsc --noEmit` across `apps/backend` — fix all type errors introduced in Phase 2 (ack-fast 200 return types, `Result` exhaustiveness, Zod inferred types).
+- [x] 2.18 Run `biome check --write` on Phase 2 changed files only — fix lint/format. Stage only Slice 2 files.
+- [x] 2.19 Run `pnpm test` from repo root — all existing tests GREEN + all Phase 1 + Phase 2 tests GREEN. No regression in `contacts`, `routing`, or `migrate` suites.
+- [x] 2.20 Commit with `feat(whatsapp): inbound webhook — handshake, HMAC, upsert, idempotent persist`.

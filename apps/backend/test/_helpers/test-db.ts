@@ -70,6 +70,13 @@ export type TestDb = {
   readonly adminQuery: <T>(run: (tx: PostgresJsDatabase) => Promise<T>) => Promise<T>;
   /** Raw app_rls connection string (for direct-client tests). */
   readonly appRlsConnectionString: string;
+  /**
+   * Resolves tenant_id from phone_number_id using the app_webhook connection (low-priv).
+   * Satisfies the DbClient.resolveTenant contract so TestDb can be passed to buildApp().
+   */
+  resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
+  /** Resolve a tenant from phone_number_id using the app_webhook connection (low-priv). */
+  resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
   /** Insert a contact row for the given tenant directly (bypasses RLS via adminSql). */
   seedTenant(
     tenantId: string,
@@ -82,8 +89,6 @@ export type TestDb = {
     displayPhoneNumber: string;
     wabaId: string;
   }): Promise<void>;
-  /** Resolve a tenant from phone_number_id using the app_webhook connection (low-priv). */
-  resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
   /** Truncate all domain tables (admin bypasses RLS). */
   truncate(): Promise<void>;
   /** Stop the container and close all connections. */
@@ -166,9 +171,28 @@ export async function createTestDb(): Promise<TestDb> {
       });
     },
 
-    async resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>> {
-      // Uses the app_webhook connection to mimic the production resolveTenant path.
+    async resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>> {
+      // Implements the DbClient.resolveTenant contract using the app_webhook connection.
       // SELECT only the granted columns — never SELECT *.
+      const rows = await appWebhookDb
+        .select({
+          phoneNumberId: whatsappAccountsTable.phoneNumberId,
+          tenantId: whatsappAccountsTable.tenantId,
+        })
+        .from(whatsappAccountsTable)
+        .where(eq(whatsappAccountsTable.phoneNumberId, phoneNumberId))
+        .limit(1);
+
+      const row = rows[0] ?? null;
+      if (!row) {
+        return err({ code: 'UNKNOWN_PHONE_NUMBER_ID' });
+      }
+      return ok(row.tenantId);
+    },
+
+    async resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>> {
+      // Alias for resolveTenant — kept for backward compat with existing tests
+      // (e.g. client.int.test.ts uses resolveWebhookTenant directly).
       const rows = await appWebhookDb
         .select({
           phoneNumberId: whatsappAccountsTable.phoneNumberId,
