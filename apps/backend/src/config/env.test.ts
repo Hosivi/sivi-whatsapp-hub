@@ -129,4 +129,18 @@ describe('loadEnv()', () => {
     const env = loadEnv();
     expect(env.APP_WEBHOOK_PASSWORD).toBeUndefined();
   });
+
+  it('ENABLE_DEV_ENDPOINTS defaults to false when absent', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('ENABLE_DEV_ENDPOINTS');
+    const env = loadEnv();
+    expect(env.ENABLE_DEV_ENDPOINTS).toBe(false);
+  });
+
+  it('ENABLE_DEV_ENDPOINTS is true when set to "true"', () => {
+    Object.assign(process.env, VALID_ENV);
+    process.env.ENABLE_DEV_ENDPOINTS = 'true';
+    const env = loadEnv();
+    expect(env.ENABLE_DEV_ENDPOINTS).toBe(true);
+  });
 });

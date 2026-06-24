@@ -46,6 +46,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
     WHATSAPP_APP_SECRET: APP_SECRET,
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
+    ENABLE_DEV_ENDPOINTS: false,
     ...overrides,
   };
 }
