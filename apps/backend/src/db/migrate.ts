@@ -127,7 +127,9 @@ export async function runMigration(env: Env): Promise<void> {
 // Detects via import.meta.url vs process.argv[1].
 if (
   process.argv[1] &&
-  fileURLToPath(import.meta.url).endsWith(process.argv[1].replace(/\\/g, '/'))
+  fileURLToPath(import.meta.url)
+    .replace(/\\/g, '/')
+    .endsWith(process.argv[1].replace(/\\/g, '/'))
 ) {
   const { loadEnv } = await import('../config/env.js');
   const env = loadEnv();
