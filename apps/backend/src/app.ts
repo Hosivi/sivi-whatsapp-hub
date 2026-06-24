@@ -30,6 +30,7 @@ import type { Env } from './config/env.js';
 import { createContactsRoute } from './contacts/contacts.route.js';
 import { createHealthRoute } from './core/health/health.route.js';
 import type { DbClient } from './db/client.js';
+import { createWhatsappWebhookRoute } from './webhooks/whatsapp.route.js';
 
 export type AppDeps = {
   readonly db: DbClient;
@@ -62,6 +63,9 @@ export function buildApp(deps?: AppDeps): Hono {
 
   if (deps) {
     app.route('/contacts', createContactsRoute(deps));
+    // WhatsApp webhook — NO tenant middleware (tenant resolved from phone_number_id).
+    // Slice 1: stub only. Slice 2 implements the real GET/POST handlers.
+    app.route('/webhooks/whatsapp', createWhatsappWebhookRoute(deps));
   }
 
   return app;

@@ -9,7 +9,10 @@
 
 import { sql as rawSql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createContactsRepository } from '../../src/contacts/contacts.repository.js';
+import {
+  createContactsRepository,
+  upsertContactTx,
+} from '../../src/contacts/contacts.repository.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -356,5 +359,124 @@ describe('ContactsRepository — intentConfidence is typeof number', () => {
     if (!contact) return;
     expect(typeof contact.intentConfidence).toBe('number');
     expect(contact.intentConfidence).toBeCloseTo(0.95, 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upsertContactTx — tx-bound upsert-or-reuse helper
+// ---------------------------------------------------------------------------
+// Extraction guard: upsertContactTx must NOT change the public behavior of create().
+// create() still returns CONTACT_ALREADY_EXISTS for a live phone conflict.
+
+describe('upsertContactTx — upsert-or-reuse semantics', () => {
+  let db: TestDb;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  beforeEach(async () => {
+    await db.truncate();
+  });
+
+  afterAll(async () => {
+    await db.teardown();
+  });
+
+  it('inserts a new contact and returns ok(newContact) for a fresh phone', async () => {
+    let contactId: string | undefined;
+    await db.withTenant(TENANT_A, async (tx) => {
+      const result = await upsertContactTx(tx, TENANT_A, {
+        phone: VALID_PHONE,
+        source: 'whatsapp',
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.phoneE164).toBe('+51987654321');
+      expect(result.value.source).toBe('whatsapp');
+      contactId = result.value.id;
+    });
+    expect(contactId).toBeDefined();
+  });
+
+  it('returns ok(existingContact) for a LIVE existing contact (reuse, NOT CONTACT_ALREADY_EXISTS)', async () => {
+    // First create via repo
+    const repo = createContactsRepository(db.withTenant, TENANT_A);
+    const first = await repo.create({ phone: VALID_PHONE, fullName: 'Alice' });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const originalId = first.value.id;
+
+    // upsertContactTx on the same live phone → reuse, not error
+    await db.withTenant(TENANT_A, async (tx) => {
+      const result = await upsertContactTx(tx, TENANT_A, {
+        phone: VALID_PHONE,
+        source: 'whatsapp',
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Returns the existing contact — same id
+      expect(result.value.id).toBe(originalId);
+    });
+  });
+
+  it('resurrects a soft-deleted contact and returns ok(resurrectedContact)', async () => {
+    const repo = createContactsRepository(db.withTenant, TENANT_A);
+    const created = await repo.create({ phone: VALID_PHONE, fullName: 'Bob' });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const originalId = created.value.id;
+
+    await repo.softDelete(originalId);
+
+    await db.withTenant(TENANT_A, async (tx) => {
+      const result = await upsertContactTx(tx, TENANT_A, {
+        phone: VALID_PHONE,
+        source: 'whatsapp',
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Same id (resurrected)
+      expect(result.value.id).toBe(originalId);
+      expect(result.value.deletedAt).toBeNull();
+    });
+  });
+
+  it('returns INVALID_PHONE for an invalid phone string', async () => {
+    await db.withTenant(TENANT_A, async (tx) => {
+      const result = await upsertContactTx(tx, TENANT_A, { phone: INVALID_PHONE });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe('INVALID_PHONE');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// create() no-regression after upsertContactTx extraction
+// ---------------------------------------------------------------------------
+
+describe('create() still returns CONTACT_ALREADY_EXISTS for a live duplicate (upsertContactTx extraction regression guard)', () => {
+  let db: TestDb;
+
+  beforeAll(async () => {
+    db = await createTestDb();
+  });
+
+  beforeEach(async () => {
+    await db.truncate();
+  });
+
+  afterAll(async () => {
+    await db.teardown();
+  });
+
+  it('create() with a live phone duplicate still returns err(CONTACT_ALREADY_EXISTS)', async () => {
+    const repo = createContactsRepository(db.withTenant, TENANT_A);
+    await repo.create({ phone: VALID_PHONE, fullName: 'Alice' });
+    const result = await repo.create({ phone: VALID_PHONE, fullName: 'Duplicate Alice' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('CONTACT_ALREADY_EXISTS');
   });
 });

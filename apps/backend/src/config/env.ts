@@ -14,6 +14,13 @@ const envSchema = z.object({
   AUTH_MODE: z.enum(['dev-header', 'jwt']),
   PORT: z.coerce.number().int().positive().default(3001),
   LOG_LEVEL: z.string().default('info'),
+  // WhatsApp Cloud API — global credentials (one Meta App per Hub instance).
+  WHATSAPP_VERIFY_TOKEN: z.string().min(1),
+  WHATSAPP_APP_SECRET: z.string().min(1),
+  // Low-privilege DB connection for the app_webhook role (cross-tenant lookup).
+  DATABASE_WEBHOOK_URL: z.string().min(1),
+  // Optional: prod password for app_webhook role (mirrors APP_RLS_PASSWORD).
+  APP_WEBHOOK_PASSWORD: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

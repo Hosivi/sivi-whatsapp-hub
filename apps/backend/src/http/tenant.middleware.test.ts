@@ -19,6 +19,9 @@ const DEV_HEADER_ENV: Env = {
   AUTH_MODE: 'dev-header',
   PORT: 3001,
   LOG_LEVEL: 'info',
+  WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
+  WHATSAPP_APP_SECRET: 'test-app-secret',
+  DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost/hub',
 };
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';

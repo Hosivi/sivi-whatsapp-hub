@@ -3,8 +3,8 @@
  *
  * createTestDb():
  * 1. Starts a postgres:16-alpine container.
- * 2. Connects as the container superuser and runs drizzle/0000_contacts.sql
- *    (creates table, RLS policy, app_rls role, grants).
+ * 2. Connects as the container superuser and runs all migration files
+ *    (creates tables, RLS policies, roles, grants).
  * 3. Returns a TestDb handle with:
  *    - withTenant: a TenantRunner connected AS app_rls (RLS enforced).
  *    - adminQuery: direct Drizzle handle connected as superuser (bypasses RLS
@@ -12,12 +12,15 @@
  *    - appRlsConnectionString: the raw connection string for direct postgres.js
  *      clients in tests that need to verify no-SET-LOCAL behavior.
  *    - seedTenant: convenience helper to insert a contact row for a given tenant.
- *    - truncate: removes all rows from contacts (between tests).
+ *    - seedWhatsappAccount: inserts a whatsapp_accounts row for test setup.
+ *    - resolveWebhookTenant: exercises the app_webhook connection (resolveTenant).
+ *    - truncate: removes all rows from all domain tables (between tests).
  *    - teardown: stops the container and closes all connections.
  *
  * IMPORTANT — password literal:
  *   The SQL in 0000_contacts.sql uses a LITERAL password string ('testpassword')
- *   for CREATE ROLE app_rls. Do NOT use psql variable syntax (:'app_rls_pw') —
+ *   for CREATE ROLE app_rls. The SQL in 0002_whatsapp.sql uses the same literal
+ *   for CREATE ROLE app_webhook. Do NOT use psql variable syntax (:'pw') —
  *   the postgres.js driver is not the psql CLI and does not expand those variables.
  *
  * IMPORTANT — app.current_tenant GUC:
@@ -37,12 +40,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { eq } from 'drizzle-orm';
 import { sql as rawSql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import type { TenantRunner } from '../../src/db/client.js';
+import type { TenantRunner, WebhookLookupError } from '../../src/db/client.js';
 import { contactsTable } from '../../src/db/schema/contacts.schema.js';
+import { whatsappAccountsTable } from '../../src/db/schema/whatsapp-accounts.schema.js';
+import type { Result } from '../../src/shared/result.js';
+import { err, ok } from '../../src/shared/result.js';
 
 // ---------------------------------------------------------------------------
 // Migration files — applied in order on the fresh container
@@ -50,7 +57,7 @@ import { contactsTable } from '../../src/db/schema/contacts.schema.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
-const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql'] as const;
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql'] as const;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -68,7 +75,16 @@ export type TestDb = {
     tenantId: string,
     data: { phoneE164: string; fullName?: string | null; routedAt?: Date | null },
   ): Promise<void>;
-  /** Truncate the contacts table (admin bypasses RLS). */
+  /** Insert a whatsapp_accounts row directly (bypasses RLS via adminSql). */
+  seedWhatsappAccount(data: {
+    phoneNumberId: string;
+    tenantId: string;
+    displayPhoneNumber: string;
+    wabaId: string;
+  }): Promise<void>;
+  /** Resolve a tenant from phone_number_id using the app_webhook connection (low-priv). */
+  resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
+  /** Truncate all domain tables (admin bypasses RLS). */
   truncate(): Promise<void>;
   /** Stop the container and close all connections. */
   teardown(): Promise<void>;
@@ -102,22 +118,27 @@ export async function createTestDb(): Promise<TestDb> {
     await adminSql.unsafe(sqlText);
   }
 
-  // 4. Build app_rls connection string (same host/port/db, different role)
+  // 4. Build connection strings (same host/port/db, different roles)
   const { hostname, port, pathname } = new URL(adminConnectionString);
   const appRlsConnectionString = `postgresql://app_rls:testpassword@${hostname}:${port}${pathname}`;
+  const appWebhookConnectionString = `postgresql://app_webhook:testpassword@${hostname}:${port}${pathname}`;
 
   // 5. Create app_rls-scoped postgres.js connection + Drizzle wrapper
   const appRlsSql = postgres(appRlsConnectionString, { max: 5 });
   const appRlsDb = drizzle(appRlsSql);
 
-  // 6. Build the TenantRunner using Drizzle transactions (matches createDbClient pattern)
+  // 6. Create app_webhook-scoped postgres.js connection + Drizzle wrapper (low-privilege lookup)
+  const appWebhookSql = postgres(appWebhookConnectionString, { max: 2 });
+  const appWebhookDb = drizzle(appWebhookSql);
+
+  // 7. Build the TenantRunner using Drizzle transactions (matches createDbClient pattern)
   const withTenant: TenantRunner = (tenantId, run) =>
     appRlsDb.transaction(async (tx) => {
       await tx.execute(rawSql`SELECT set_config('app.current_tenant', ${tenantId}, true)`);
       return run(tx);
     });
 
-  // 7. Admin query helper for test setup/assertions (bypasses RLS)
+  // 8. Admin query helper for test setup/assertions (bypasses RLS)
   const adminQuery = <T>(run: (tx: PostgresJsDatabase) => Promise<T>): Promise<T> => run(adminDb);
 
   return {
@@ -135,14 +156,44 @@ export async function createTestDb(): Promise<TestDb> {
       });
     },
 
+    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId }) {
+      // Insert directly via admin connection (bypasses RLS).
+      await adminDb.insert(whatsappAccountsTable).values({
+        tenantId,
+        phoneNumberId,
+        displayPhoneNumber,
+        wabaId,
+      });
+    },
+
+    async resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>> {
+      // Uses the app_webhook connection to mimic the production resolveTenant path.
+      // SELECT only the granted columns — never SELECT *.
+      const rows = await appWebhookDb
+        .select({
+          phoneNumberId: whatsappAccountsTable.phoneNumberId,
+          tenantId: whatsappAccountsTable.tenantId,
+        })
+        .from(whatsappAccountsTable)
+        .where(eq(whatsappAccountsTable.phoneNumberId, phoneNumberId))
+        .limit(1);
+
+      const row = rows[0] ?? null;
+      if (!row) {
+        return err({ code: 'UNKNOWN_PHONE_NUMBER_ID' });
+      }
+      return ok(row.tenantId);
+    },
+
     async truncate() {
-      // Truncate both tables via admin (superuser) bypasses RLS.
-      // Order: outbox first (no FK, but good habit), then contacts.
-      await adminSql`TRUNCATE TABLE contact_lead_outbox, contacts RESTART IDENTITY CASCADE`;
+      // Truncate all domain tables via admin (superuser) bypasses RLS.
+      // Order: whatsapp_messages first (FK → contacts), then whatsapp_accounts, outbox, contacts.
+      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, contacts RESTART IDENTITY CASCADE`;
     },
 
     async teardown() {
       await appRlsSql.end();
+      await appWebhookSql.end();
       await adminSql.end();
       await container.stop();
     },

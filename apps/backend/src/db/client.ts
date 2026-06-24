@@ -19,10 +19,14 @@
  * set_config() call and all subsequent repo queries.
  */
 
+import { eq } from 'drizzle-orm';
 import { sql as rawSql } from 'drizzle-orm';
 import { type PostgresJsDatabase, drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { Env } from '../config/env.js';
+import { err, ok } from '../shared/result.js';
+import type { Result } from '../shared/result.js';
+import { whatsappAccountsTable } from './schema/whatsapp-accounts.schema.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -39,10 +43,20 @@ export type TenantRunner = <T>(
   run: (tx: PostgresJsDatabase) => Promise<T>,
 ) => Promise<T>;
 
+/** Error returned by resolveTenant when phone_number_id is not found. */
+export type WebhookLookupError = { readonly code: 'UNKNOWN_PHONE_NUMBER_ID' };
+
 export type DbClient = {
   readonly withTenant: TenantRunner;
   /** Privileged handle — migration/bootstrap ONLY. Never pass to repositories. */
   readonly adminSql: postgres.Sql;
+  /**
+   * Resolves tenant_id from phone_number_id using the low-privilege app_webhook handle.
+   * Queries EXPLICIT columns (phone_number_id, tenant_id) — never SELECT *.
+   * Returns ok(tenantId) if a live row exists; err(UNKNOWN_PHONE_NUMBER_ID) otherwise.
+   * lookupSql is PRIVATE — not exposed on DbClient.
+   */
+  resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
   close(): Promise<void>;
 };
 
@@ -66,12 +80,48 @@ export const createDbClient = (env: Env): DbClient => {
   // Privileged connection: used for migration execution in main.ts/tests.
   const adminSql = postgres(env.DATABASE_ADMIN_URL, { max: 2 });
 
+  // Low-privilege webhook lookup connection: app_webhook role (NOSUPERUSER, NOBYPASSRLS).
+  // Used ONLY for the cross-tenant phone_number_id → tenant_id resolution.
+  // NEVER used for domain reads/writes. PRIVATE — not exposed on DbClient.
+  const lookupSql = postgres(env.DATABASE_WEBHOOK_URL, { max: 2 });
+  const lookupDb = drizzle(lookupSql);
+
+  /**
+   * Resolves tenant_id from phone_number_id using the app_webhook (low-privilege) handle.
+   * Selects EXPLICIT columns — NEVER SELECT * (column grant restricts to phone_number_id,
+   * tenant_id only; SELECT * would fail with permission denied).
+   * Filters live rows (deleted_at IS NULL) to avoid resolving deactivated accounts.
+   */
+  const resolveTenant = async (
+    phoneNumberId: string,
+  ): Promise<Result<string, WebhookLookupError>> => {
+    // app_webhook has a COLUMN-SCOPED grant: SELECT (phone_number_id, tenant_id).
+    // We must select ONLY those explicit columns — never SELECT *.
+    // No tenant GUC is set; webhook_config_read policy (USING true) allows cross-tenant reads.
+    const rows = await lookupDb
+      .select({
+        phoneNumberId: whatsappAccountsTable.phoneNumberId,
+        tenantId: whatsappAccountsTable.tenantId,
+      })
+      .from(whatsappAccountsTable)
+      .where(eq(whatsappAccountsTable.phoneNumberId, phoneNumberId))
+      .limit(1);
+
+    const row = rows[0] ?? null;
+    if (!row) {
+      return err({ code: 'UNKNOWN_PHONE_NUMBER_ID' });
+    }
+    return ok(row.tenantId);
+  };
+
   return {
     withTenant,
     adminSql,
+    resolveTenant,
     close: async () => {
       await sql.end();
       await adminSql.end();
+      await lookupSql.end();
     },
   };
 };

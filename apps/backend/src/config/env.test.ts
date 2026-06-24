@@ -12,6 +12,9 @@ const VALID_ENV = {
   AUTH_MODE: 'dev-header',
   PORT: '3001',
   LOG_LEVEL: 'info',
+  WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
+  WHATSAPP_APP_SECRET: 'test-app-secret',
+  DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/hub',
 };
 
 /** Remove a key from process.env without using delete (Biome noDelete rule). */
@@ -97,5 +100,33 @@ describe('loadEnv()', () => {
     expect(env.AUTH_MODE).toBe('dev-header');
     expect(env.PORT).toBe(3001);
     expect(env.LOG_LEVEL).toBe('info');
+    expect(env.WHATSAPP_VERIFY_TOKEN).toBe('test-verify-token');
+    expect(env.WHATSAPP_APP_SECRET).toBe('test-app-secret');
+    expect(env.DATABASE_WEBHOOK_URL).toBe(VALID_ENV.DATABASE_WEBHOOK_URL);
+  });
+
+  it('throws when WHATSAPP_VERIFY_TOKEN is missing', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('WHATSAPP_VERIFY_TOKEN');
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('throws when WHATSAPP_APP_SECRET is missing', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('WHATSAPP_APP_SECRET');
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('throws when DATABASE_WEBHOOK_URL is missing', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('DATABASE_WEBHOOK_URL');
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('APP_WEBHOOK_PASSWORD is optional — does not throw when absent', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('APP_WEBHOOK_PASSWORD');
+    const env = loadEnv();
+    expect(env.APP_WEBHOOK_PASSWORD).toBeUndefined();
   });
 });

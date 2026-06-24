@@ -35,6 +35,9 @@ function makeEnv(overrides?: Partial<Env>): Env {
     AUTH_MODE: 'dev-header',
     PORT: 3001,
     LOG_LEVEL: 'silent',
+    WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
+    WHATSAPP_APP_SECRET: 'test-app-secret',
+    DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ...overrides,
   };
 }

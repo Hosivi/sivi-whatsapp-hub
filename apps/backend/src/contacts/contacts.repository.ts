@@ -85,6 +85,112 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// upsertContactTx — tx-bound upsert-or-reuse helper (exported for webhook use)
+//
+// Semantics (differs from create()):
+//   LIVE existing contact   → ok(existingContact) (REUSE — not CONTACT_ALREADY_EXISTS)
+//   Soft-deleted contact    → resurrect UPDATE RETURNING → ok(resurrectedContact)
+//   New phone               → INSERT RETURNING → ok(newContact)
+//   Concurrent insert race  → catch 23505 → re-SELECT live row → ok(concurrentContact)
+//   Invalid phone           → err(INVALID_PHONE) (no DB hit)
+//
+// Called by the webhook service inside a withTenant() tx to atomically
+// upsert the contact AND insert the message in one transaction.
+// create() is rewritten to call this helper internally while PRESERVING its
+// public semantics (live duplicate → err(CONTACT_ALREADY_EXISTS)).
+// ---------------------------------------------------------------------------
+
+export const upsertContactTx = async (
+  tx: PostgresJsDatabase,
+  tenantId: string,
+  input: NewContactInput,
+): Promise<Result<Contact, ContactError>> => {
+  const normalized = normalizePhoneE164(input.phone);
+  if (!normalized.ok) {
+    return err({ code: 'INVALID_PHONE' });
+  }
+  const phoneE164 = normalized.value;
+
+  // SELECT by normalized phone including soft-deleted rows (RLS scoped to tenant).
+  const rows = await tx
+    .select()
+    .from(contactsTable)
+    .where(eq(contactsTable.phoneE164, phoneE164))
+    .limit(1);
+
+  const existing = rows[0];
+
+  // LIVE existing → reuse (upsert-or-reuse semantics)
+  if (existing && existing.deletedAt === null) {
+    return ok(mapRowToContact(existing));
+  }
+
+  // Soft-deleted → resurrect same row (same id)
+  if (existing && existing.deletedAt !== null) {
+    const updated = await tx
+      .update(contactsTable)
+      .set({
+        deletedAt: null,
+        fullName: input.fullName ?? null,
+        source: input.source ?? null,
+        tags: input.tags ?? existing.tags,
+        intent: input.intent ?? existing.intent,
+        intentConfidence:
+          input.intentConfidence !== undefined
+            ? String(input.intentConfidence)
+            : existing.intentConfidence,
+        updatedAt: new Date(),
+      })
+      .where(eq(contactsTable.id, existing.id))
+      .returning();
+
+    const row = updated[0];
+    if (!row) {
+      return err({ code: 'DB_ERROR' });
+    }
+    return ok(mapRowToContact(row));
+  }
+
+  // INSERT — catch unique violation for concurrent-create race
+  try {
+    const inserted = await tx
+      .insert(contactsTable)
+      .values({
+        tenantId,
+        phoneE164,
+        fullName: input.fullName ?? null,
+        source: input.source ?? null,
+        tags: input.tags ?? [],
+        intent: input.intent ?? null,
+        intentConfidence:
+          input.intentConfidence !== undefined ? String(input.intentConfidence) : null,
+      })
+      .returning();
+
+    const row = inserted[0];
+    if (!row) {
+      return err({ code: 'DB_ERROR' });
+    }
+    return ok(mapRowToContact(row));
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      // Concurrent insert — re-SELECT the live row
+      const raceRows = await tx
+        .select()
+        .from(contactsTable)
+        .where(eq(contactsTable.phoneE164, phoneE164))
+        .limit(1);
+      const raceRow = raceRows[0];
+      if (raceRow && raceRow.deletedAt === null) {
+        return ok(mapRowToContact(raceRow));
+      }
+      return err({ code: 'DB_ERROR' });
+    }
+    return err({ code: 'DB_ERROR', cause: e });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -95,6 +201,12 @@ export const createContactsRepository = (
   // ------------------------------------------------------------------
   // create
   // ------------------------------------------------------------------
+  // Delegates to upsertContactTx for the core upsert logic, but PRESERVES
+  // the public "error on live duplicate" contract via a pre-check.
+  // A live existing contact → err(CONTACT_ALREADY_EXISTS) (unchanged behavior).
+  // A soft-deleted contact → resurrect (unchanged behavior).
+  // A new phone → INSERT (unchanged behavior).
+  // ------------------------------------------------------------------
   const create = async (input: NewContactInput): Promise<Result<Contact, ContactError>> => {
     // Step 1: normalize phone (no DB hit)
     const normalized = normalizePhoneE164(input.phone);
@@ -104,74 +216,26 @@ export const createContactsRepository = (
     const phoneE164 = normalized.value;
 
     return withTenant(tenantId, async (tx: PostgresJsDatabase) => {
-      // Step 2: SELECT by normalized phone, including soft-deleted rows.
-      // RLS scopes to current tenant — no WHERE tenant_id needed.
-      const rows = await tx
+      // Pre-check: if a LIVE row exists, return CONTACT_ALREADY_EXISTS (public contract).
+      // This check runs BEFORE calling upsertContactTx so we can distinguish
+      // "already live" (create() → error) from "was soft-deleted" (create() → resurrect).
+      const existing = await tx
         .select()
         .from(contactsTable)
         .where(eq(contactsTable.phoneE164, phoneE164))
         .limit(1);
 
-      const existing = rows[0];
-
-      // Step 3: live conflict
-      if (existing && existing.deletedAt === null) {
+      if (existing[0] && existing[0].deletedAt === null) {
         return err({ code: 'CONTACT_ALREADY_EXISTS' });
       }
 
-      // Step 4: soft-deleted → resurrect same row (same id)
-      if (existing && existing.deletedAt !== null) {
-        const updated = await tx
-          .update(contactsTable)
-          .set({
-            deletedAt: null,
-            fullName: input.fullName ?? null,
-            source: input.source ?? null,
-            tags: input.tags ?? existing.tags,
-            intent: input.intent ?? existing.intent,
-            intentConfidence:
-              input.intentConfidence !== undefined
-                ? String(input.intentConfidence)
-                : existing.intentConfidence,
-            updatedAt: new Date(),
-          })
-          .where(eq(contactsTable.id, existing.id))
-          .returning();
+      // For absent or soft-deleted rows, delegate to upsertContactTx.
+      // upsertContactTx will: resurrect soft-deleted → ok, or INSERT → ok.
+      const result = await upsertContactTx(tx, tenantId, input);
 
-        const row = updated[0];
-        if (!row) {
-          return err({ code: 'DB_ERROR' });
-        }
-        return ok(mapRowToContact(row));
-      }
-
-      // Step 5: INSERT — catch unique violation for concurrent-create race
-      try {
-        const inserted = await tx
-          .insert(contactsTable)
-          .values({
-            tenantId,
-            phoneE164,
-            fullName: input.fullName ?? null,
-            source: input.source ?? null,
-            tags: input.tags ?? [],
-            intent: input.intent ?? null,
-            intentConfidence:
-              input.intentConfidence !== undefined ? String(input.intentConfidence) : null,
-          })
-          .returning();
-
-        const row = inserted[0];
-        if (!row) {
-          return err({ code: 'DB_ERROR' });
-        }
-        return ok(mapRowToContact(row));
-      } catch (e) {
-        if (isUniqueViolation(e)) {
-          return err({ code: 'CONTACT_ALREADY_EXISTS' });
-        }
-        return err({ code: 'DB_ERROR', cause: e });
-      }
+      // upsertContactTx on a fresh/soft-deleted phone never returns CONTACT_ALREADY_EXISTS
+      // (only INVALID_PHONE or DB_ERROR). Re-bubble any errors from it unchanged.
+      return result;
     });
   };
 

@@ -36,29 +36,56 @@ import type { Env } from '../config/env.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Relative to compiled output: apps/backend/dist/db/migrate.js → ../../drizzle/
 // Ordered list of migration files. Applied in array order. APPEND new files here.
-const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql'] as const;
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql'] as const;
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 
 /**
  * Replaces the bare CREATE ROLE line with an idempotent DO block.
- * The password is supplied by the caller (from APP_RLS_PASSWORD) — never a source
- * literal — and MUST match the app_rls password embedded in DATABASE_URL. On a
- * re-run the role already exists, so we ALTER its password to keep it in sync.
+ *
+ * appRlsPassword — supplied from APP_RLS_PASSWORD; MUST match the password in DATABASE_URL.
+ * appWebhookPassword — optional; defaults to 'app_webhook'. When provided, rewrites
+ *   BOTH the CREATE and ALTER password literals inside the DO/EXCEPTION block for
+ *   the app_webhook role in 0002_whatsapp.sql. The 3rd param is OPTIONAL so that
+ *   existing 2-arg callers (migrate.int.test.ts:35, migrate.routing.int.test.ts:44,117)
+ *   continue to compile and run unchanged — they do not connect as app_webhook.
+ *
+ * A replacement FUNCTION is required for the app_rls branch: a replacement STRING
+ * would treat `$$` dollar-quote delimiters as `$`-escapes and corrupt the DO block.
  */
-export function makeIdempotent(sql: string, appRlsPassword: string): string {
-  const safePw = appRlsPassword.replace(/'/g, "''");
-  // A replacement FUNCTION is required here: a replacement STRING would treat the
-  // `$$` dollar-quote delimiters as `$`-escapes (`$$` -> `$`) and corrupt the DO block.
-  return sql.replace(
+export function makeIdempotent(
+  sql: string,
+  appRlsPassword: string,
+  appWebhookPassword = 'app_webhook', // optional default — keeps existing 2-arg callers compiling
+): string {
+  const safeRls = appRlsPassword.replace(/'/g, "''");
+  const safeWh = appWebhookPassword.replace(/'/g, "''");
+
+  // Rewrite app_rls CREATE ROLE line → idempotent DO block.
+  let out = sql.replace(
     /CREATE ROLE app_rls[^\n;]+;/,
     () => `DO $$
 BEGIN
-  CREATE ROLE app_rls LOGIN PASSWORD '${safePw}' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  CREATE ROLE app_rls LOGIN PASSWORD '${safeRls}' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 EXCEPTION WHEN duplicate_object THEN
-  ALTER ROLE app_rls LOGIN PASSWORD '${safePw}';
+  ALTER ROLE app_rls LOGIN PASSWORD '${safeRls}';
 END
 $$;`,
   );
+
+  // Rewrite app_webhook CREATE + ALTER password literals in 0002_whatsapp.sql.
+  // The migration already uses a DO/EXCEPTION guard; we only need to substitute
+  // the password strings so prod stays in sync with DATABASE_WEBHOOK_URL credentials.
+  out = out
+    .replace(
+      /CREATE ROLE app_webhook LOGIN PASSWORD '[^']*'/,
+      `CREATE ROLE app_webhook LOGIN PASSWORD '${safeWh}'`,
+    )
+    .replace(
+      /ALTER ROLE app_webhook LOGIN PASSWORD '[^']*'/,
+      `ALTER ROLE app_webhook LOGIN PASSWORD '${safeWh}'`,
+    );
+
+  return out;
 }
 
 /**
@@ -71,14 +98,18 @@ export async function runMigration(env: Env): Promise<void> {
   // app_rls role password — sourced from env (never a source literal); it MUST
   // match the app_rls password embedded in DATABASE_URL.
   const appRlsPassword = process.env.APP_RLS_PASSWORD ?? 'app_rls';
+  // app_webhook role password — sourced from APP_WEBHOOK_PASSWORD (mirrors APP_RLS_PASSWORD).
+  // Default 'app_webhook' matches the in-SQL literal for local/test environments.
+  const appWebhookPassword = process.env.APP_WEBHOOK_PASSWORD ?? 'app_webhook';
   const adminSql = postgres(env.DATABASE_ADMIN_URL, { max: 1 });
 
   try {
     for (const file of MIGRATION_FILES) {
       const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf-8');
-      // makeIdempotent rewrites the bare `CREATE ROLE app_rls` line (0000 only).
-      // For 0001 and later files that lack this line, it is a no-op (regex finds nothing).
-      const idempotent = makeIdempotent(raw, appRlsPassword);
+      // makeIdempotent rewrites the bare `CREATE ROLE app_rls` line (0000 only)
+      // and the app_webhook CREATE/ALTER password literals (0002 only).
+      // For files that lack these lines it is a no-op (regexes find nothing).
+      const idempotent = makeIdempotent(raw, appRlsPassword, appWebhookPassword);
       await adminSql.unsafe(idempotent);
       console.info(`[migrate] applied ${file}`);
     }
