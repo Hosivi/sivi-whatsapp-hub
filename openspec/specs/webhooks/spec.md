@@ -2,7 +2,7 @@
 
 > **Domain**: webhooks (new module — whatsapp-webhook, whatsapp-accounts, whatsapp-messages)
 > **Scope**: Corte 2 skeleton — inbound message ingestion from Meta Cloud API
-> **Last Updated**: 2026-06-24 (post-verify, canonical merged spec)
+> **Last Updated**: 2026-06-25 (whatsapp-outbound merged: access_token + direction)
 
 ---
 
@@ -26,6 +26,7 @@ Configuration table: tenant ↔ WhatsApp phone number mapping.
 | `display_phone_number` | `TEXT` | NOT NULL |
 | `waba_id` | `TEXT` | NOT NULL |
 | `is_active` | `BOOLEAN` | NOT NULL, DEFAULT `true` |
+| `access_token` | `TEXT` | NULLABLE |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
 | `updated_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
 | `deleted_at` | `TIMESTAMPTZ` | NULLABLE (soft-delete) |
@@ -35,12 +36,13 @@ Configuration table: tenant ↔ WhatsApp phone number mapping.
 - `webhook_config_read` TO `app_webhook` FOR SELECT: `USING(true)` — allows cross-tenant config reads by the lookup handle.
 
 **Grants**:
-- `app_rls`: SELECT, INSERT, UPDATE, DELETE
-- `app_webhook`: SELECT (phone_number_id, tenant_id) — column-scoped, no unlisted columns accessible
+- `app_rls`: SELECT, INSERT, UPDATE, DELETE (table-level; covers `access_token`)
+- `app_webhook`: SELECT (phone_number_id, tenant_id) — column-scoped; `access_token` is NOT included
 
 **Notes**:
 - NO `app_secret` or `verify_token` columns. Credentials are global env vars (`WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`), not per-row.
 - `is_active` is included (forward-compat for deactivating a number without soft-delete).
+- `access_token` holds the per-tenant Meta System User Bearer token (NULL = outbound not configured). It MUST NOT appear in any log line, API response, or trace at any level.
 
 ### whatsapp_messages
 
@@ -57,6 +59,7 @@ Inbound message persistence table.
 | `message_type` | `TEXT` | NOT NULL |
 | `text_body` | `TEXT` | NULLABLE |
 | `raw_payload` | `JSONB` | NOT NULL |
+| `direction` | `TEXT` | NOT NULL, DEFAULT `'inbound'` |
 | `received_at` | `TIMESTAMPTZ` | NOT NULL |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
 
@@ -68,8 +71,10 @@ Inbound message persistence table.
 - `app_webhook`: NO policy and NO grant (forbidden cross-tenant access to messages)
 
 **Notes**:
-- NO `direction` column (receive-only in this slice).
-- `contact_id` is NOT NULL: the contact upsert always runs first.
+- `direction` discriminates inbound (`'inbound'`, default) from outbound (`'outbound'`) rows. Existing inbound rows receive `direction = 'inbound'` via the column default — no explicit backfill required. Added via migration `0003_outbound.sql`.
+- `contact_id` is NOT NULL for both directions: the contact upsert (`upsertContactTx`) always runs first. For outbound rows it is keyed by the recipient phone (`to`). For inbound rows it is keyed by the sender phone (`message.from`).
+- `from_phone_e164` holds the CONTACT/RECIPIENT phone for both directions.
+- `received_at` carries the SEND timestamp for outbound rows.
 - `wamid` is globally unique (per Meta spec — prevents cross-tenant collisions naturally).
 
 ---
@@ -82,14 +87,14 @@ The `whatsapp_accounts` table MUST be created with the columns and constraints s
 
 #### Scenario: table exists with correct shape
 
-- GIVEN the `0002_whatsapp.sql` migration has been applied
+- GIVEN the `0002_whatsapp.sql` and `0003_outbound.sql` migrations have been applied
 - WHEN the schema is introspected
-- THEN `whatsapp_accounts` exists with all required columns
+- THEN `whatsapp_accounts` exists with all required columns including `access_token TEXT` (nullable)
 - AND there is NO `app_secret` column and NO `verify_token` column
 - AND a partial UNIQUE index on `phone_number_id WHERE deleted_at IS NULL` is present
 - AND RLS is enabled and forced on the table
-- AND `app_rls` has SELECT, INSERT, UPDATE, DELETE grants
-- AND `app_webhook` has SELECT (phone_number_id, tenant_id) grant only
+- AND `app_rls` has SELECT, INSERT, UPDATE, DELETE grants (covering `access_token`)
+- AND `app_webhook` has SELECT (phone_number_id, tenant_id) grant only (`access_token` excluded)
 
 ---
 
@@ -127,6 +132,75 @@ The system MUST resolve `tenant_id` from `phone_number_id` via the `app_webhook`
 
 ---
 
+### Requirement: access_token Column
+
+The `whatsapp_accounts` table MUST have a nullable `access_token TEXT` column
+(added via migration `0003_outbound.sql`). The column MUST default to `NULL`
+(not configured). The existing `tenant_isolation` RLS policy on `app_rls` covers
+this column through the table-level SELECT, INSERT, UPDATE, DELETE grants — no
+additional policy is needed.
+
+The `access_token` value represents a Meta System User permanent Bearer token
+(non-expiring but revocable). It MUST NOT appear in any log line, API response,
+or trace at any level.
+
+#### Scenario: migration adds access_token column as nullable
+
+- GIVEN `0002_whatsapp.sql` has been applied (no `access_token` column)
+- WHEN `0003_outbound.sql` is applied
+- THEN `whatsapp_accounts` gains an `access_token TEXT` column with no NOT NULL constraint
+- AND existing rows have `access_token = NULL` (no backfill for live data)
+
+#### Scenario: existing app_rls grants cover access_token without change
+
+- GIVEN the migration has applied the new column
+- WHEN querying `whatsapp_accounts` as `app_rls` under a valid tenant context
+- THEN `access_token` is readable and writable without any additional grant
+- AND `app_webhook` cannot read `access_token` (column-scoped grant does NOT include it)
+
+---
+
+### Requirement: app_webhook Role Exclusion from access_token
+
+The `app_webhook` role's existing column-scoped grant
+(`SELECT (phone_number_id, tenant_id)`) MUST NOT be expanded to include
+`access_token`. The token MUST remain inaccessible to the low-privilege webhook
+lookup role.
+
+#### Scenario: app_webhook cannot read access_token
+
+- GIVEN the migration has run
+- WHEN connecting as `app_webhook` and executing
+  `SELECT access_token FROM whatsapp_accounts`
+- THEN the query is denied (column permission error)
+
+---
+
+### Requirement: Dev Seed access_token Backfill
+
+`seed-dev.ts` MUST insert (or upsert) the dev `whatsapp_accounts` row with
+`access_token = 'dev-access-token'` (a placeholder, not a real Meta token).
+This allows the dev path to exercise the full outbound flow end-to-end against
+the fake Meta client without requiring a real token.
+
+Repeated runs MUST be idempotent — no duplicate rows, no error.
+
+#### Scenario: dev seed sets access_token placeholder
+
+- GIVEN the dev seed has been run
+- WHEN querying the dev `whatsapp_accounts` row
+- THEN `access_token = 'dev-access-token'`
+- AND `deleted_at` is NULL (row is live)
+
+#### Scenario: repeated seed runs remain idempotent
+
+- GIVEN the dev seed has been run once
+- WHEN `seed-dev.ts` is executed again
+- THEN still exactly one row exists with `access_token = 'dev-access-token'`
+- AND the script exits without error
+
+---
+
 ## New Capability: whatsapp-messages
 
 ### Requirement: whatsapp_messages Table Shape
@@ -135,10 +209,9 @@ The `whatsapp_messages` table MUST be created with the columns and constraints s
 
 #### Scenario: table exists with correct shape
 
-- GIVEN the `0002_whatsapp.sql` migration has been applied
+- GIVEN the `0002_whatsapp.sql` and `0003_outbound.sql` migrations have been applied
 - WHEN the schema is introspected
-- THEN `whatsapp_messages` exists with all required columns
-- AND there is NO `direction` column
+- THEN `whatsapp_messages` exists with all required columns including `direction TEXT NOT NULL DEFAULT 'inbound'`
 - AND `contact_id` has a NOT NULL constraint and a FK to `contacts(id)`
 - AND `from_phone_e164` is NOT NULL
 - AND a UNIQUE index on `wamid` is present
@@ -178,6 +251,79 @@ A message persisted under tenant A MUST NOT be visible under tenant B. RLS on `w
 - AND `SELECT * FROM whatsapp_messages` is executed
 - THEN zero rows are returned for tenant B
 - AND the row is visible when queried under tenant A's context
+
+---
+
+### Requirement: direction Column
+
+The `whatsapp_messages` table MUST have a `direction TEXT NOT NULL DEFAULT 'inbound'` column
+(added via migration `0003_outbound.sql`).
+
+- All existing rows MUST inherit `direction = 'inbound'` via the column default
+  (no explicit backfill required; Postgres applies the default to existing rows
+  when a non-nullable column with a default is added via `ALTER TABLE ... ADD COLUMN`).
+- Inbound rows written by `POST /webhooks/whatsapp` do NOT need to set `direction`
+  explicitly — the default is applied automatically.
+- Outbound rows written by `POST /whatsapp-send` MUST set `direction = 'outbound'`
+  explicitly.
+
+#### Scenario: migration adds direction column with default 'inbound'
+
+- GIVEN `0002_whatsapp.sql` has been applied (no `direction` column)
+- WHEN `0003_outbound.sql` is applied
+- THEN `whatsapp_messages` gains a `direction TEXT NOT NULL DEFAULT 'inbound'` column
+- AND all pre-existing inbound rows have `direction = 'inbound'`
+
+#### Scenario: existing inbound INSERT behavior unchanged (direction defaults)
+
+- GIVEN the migration has been applied
+- WHEN `POST /webhooks/whatsapp` processes a valid inbound message (no `direction` set explicitly)
+- THEN the persisted row has `direction = 'inbound'`
+- AND all previously tested inbound scenarios still hold
+
+---
+
+### Requirement: Outbound Row Shape
+
+When `POST /whatsapp-send` persists a successful send, the resulting
+`whatsapp_messages` row MUST have:
+
+| Field | Value |
+|-------|-------|
+| `direction` | `'outbound'` |
+| `wamid` | the `id` value from Meta's response (`messages[0].id`) |
+| `from_phone_e164` | the `to` field from the request body (recipient phone) |
+| `phone_number_id` | the `phone_number_id` from the resolved `whatsapp_accounts` row |
+| `message_type` | `'text'` |
+| `text_body` | the `text` field from the request body |
+| `raw_payload` | the Meta API response body (JSONB) |
+| `received_at` | timestamp at the time of send |
+| `contact_id` | the recipient contact, resolved via the shared contact upsert (NOT NULL) |
+
+#### Scenario: outbound row has correct direction and wamid
+
+- GIVEN `POST /whatsapp-send` succeeds with Meta returning `wamid = 'wamid_out_001'`
+- WHEN the row is read back from `whatsapp_messages` under tenant A's context
+- THEN `direction = 'outbound'`
+- AND `wamid = 'wamid_out_001'`
+- AND `from_phone_e164` equals the `to` value from the request body
+
+---
+
+### Requirement: direction Column — Inbound/Outbound Segregation
+
+A query filtered on `direction = 'inbound'` MUST return only inbound rows. A
+query filtered on `direction = 'outbound'` MUST return only outbound rows. Both
+queries MUST rely on RLS via `withTenant` — no `WHERE tenant_id`.
+
+#### Scenario: filtering by direction returns correct subset
+
+- GIVEN tenant A has one inbound row (`direction = 'inbound'`) and one outbound row (`direction = 'outbound'`)
+- WHEN `whatsapp_messages` is queried with `direction = 'inbound'` under tenant A's context
+- THEN exactly one row is returned (the inbound row)
+
+- WHEN `whatsapp_messages` is queried with `direction = 'outbound'` under tenant A's context
+- THEN exactly one row is returned (the outbound row)
 
 ---
 
