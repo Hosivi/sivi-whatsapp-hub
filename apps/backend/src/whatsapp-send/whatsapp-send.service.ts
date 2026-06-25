@@ -19,8 +19,8 @@
 
 import { sql as rawSql } from 'drizzle-orm';
 import type { AppDeps } from '../app.js';
-import type { TenantRunner } from '../db/client.js';
 import { upsertContactTx } from '../contacts/contacts.repository.js';
+import type { TenantRunner } from '../db/client.js';
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
 import { mapMetaError } from './whatsapp-send.errors.js';
@@ -67,13 +67,15 @@ export const resolveActiveAccount = async (
         LIMIT 2
       `,
     );
-    return result as Array<{ phone_number_id: string; access_token: string | null }>;
+    return result as unknown as Array<{ phone_number_id: string; access_token: string | null }>;
   });
 
-  if (rows.length === 0 || rows.length > 1) {
+  if (rows.length !== 1) {
     return err({ code: 'NO_ACTIVE_ACCOUNT' });
   }
 
+  // rows.length === 1 at this point; index access is safe.
+  // biome-ignore lint/style/noNonNullAssertion: guarded by rows.length === 1 check above
   const row = rows[0]!;
   if (row.access_token === null || row.access_token === undefined) {
     return err({ code: 'OUTBOUND_NOT_CONFIGURED' });

@@ -31,7 +31,9 @@ const bodySchema = z.object({
 // Route factory
 // ---------------------------------------------------------------------------
 
-export const createWhatsappSendRoute = (deps: AppDeps): Hono => {
+export const createWhatsappSendRoute = (
+  deps: AppDeps,
+): Hono<{ Variables: { tenantId: string } }> => {
   const router = new Hono<{ Variables: { tenantId: string } }>();
 
   // Tenant middleware on all routes (X-Tenant-Id header required).

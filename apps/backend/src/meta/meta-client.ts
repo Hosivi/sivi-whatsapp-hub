@@ -70,33 +70,35 @@ type MetaApiResponse = {
 export const createMetaClient = (version: string): MetaClient => ({
   async sendText({ phoneNumberId, accessToken, to, text }) {
     try {
-      const res = await fetch(
-        `https://graph.facebook.com/${version}/${phoneNumberId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${accessToken}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to,
-            type: 'text',
-            text: { body: text },
-          }),
+      const res = await fetch(`https://graph.facebook.com/${version}/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json',
         },
-      );
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to,
+          type: 'text',
+          text: { body: text },
+        }),
+      });
       const body = (await res.json()) as MetaApiResponse;
       if (!res.ok) {
-        return err({
-          code: 'META_API_ERROR' as const,
-          metaCode: body.error?.code,
-          detail: body.error?.message,
-        });
+        // Use explicit undefined checks for exactOptionalPropertyTypes compliance.
+        const errorObj: MetaSendError = {
+          code: 'META_API_ERROR',
+          ...(body.error?.code !== undefined ? { metaCode: body.error.code } : {}),
+          ...(body.error?.message !== undefined ? { detail: body.error.message } : {}),
+        };
+        return err(errorObj);
       }
       const wamid = body.messages?.[0]?.id;
       if (!wamid) {
-        return err({ code: 'META_API_ERROR' as const, detail: 'missing wamid in 2xx response' });
+        return err({
+          code: 'META_API_ERROR',
+          detail: 'missing wamid in 2xx response',
+        } as MetaSendError);
       }
       return ok({ wamid, status: body.messages?.[0]?.message_status ?? 'accepted' });
     } catch (cause) {
