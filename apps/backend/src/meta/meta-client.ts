@@ -62,15 +62,24 @@ type MetaApiResponse = {
 
 /**
  * Real HTTP impl. Builds POST https://graph.facebook.com/{version}/{phoneNumberId}/messages
- * with Authorization: Bearer {accessToken}. NEVER logs the token.
- * - 2xx          → ok({ wamid: body.messages[0].id, status: body.messages[0].message_status ?? 'accepted' })
- * - non-2xx JSON → err({ code: 'META_API_ERROR', metaCode: body.error?.code, detail: body.error?.message })
- * - fetch throws / non-JSON body → err({ code: 'NETWORK_ERROR', cause })
+ * with Authorization: Bearer {accessToken}. NEVER logs or returns the token.
+ *
+ * Ordering matters — the HTTP status is checked BEFORE the body is parsed:
+ * - fetch throws (transport failure)        → err({ code: 'NETWORK_ERROR', cause })
+ * - non-2xx + JSON body                     → err({ code: 'META_API_ERROR', metaCode, detail })
+ * - non-2xx + non-JSON body                 → err({ code: 'META_API_ERROR', metaCode: httpStatus })
+ * - 2xx + JSON with messages[0].id          → ok({ wamid, status })
+ * - 2xx + non-JSON / missing wamid          → err({ code: 'META_API_ERROR', detail })
+ *
+ * A non-2xx response is NEVER mapped to NETWORK_ERROR — only a genuine transport
+ * failure (fetch rejecting) is. The access token never appears in any returned
+ * error: only the HTTP status and Meta's own error body are surfaced.
  */
 export const createMetaClient = (version: string): MetaClient => ({
   async sendText({ phoneNumberId, accessToken, to, text }) {
+    let res: Response;
     try {
-      const res = await fetch(`https://graph.facebook.com/${version}/${phoneNumberId}/messages`, {
+      res = await fetch(`https://graph.facebook.com/${version}/${phoneNumberId}/messages`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${accessToken}`,
@@ -78,32 +87,51 @@ export const createMetaClient = (version: string): MetaClient => ({
         },
         body: JSON.stringify({
           messaging_product: 'whatsapp',
+          recipient_type: 'individual',
           to,
           type: 'text',
-          text: { body: text },
+          text: { body: text, preview_url: false },
         }),
       });
-      const body = (await res.json()) as MetaApiResponse;
-      if (!res.ok) {
-        // Use explicit undefined checks for exactOptionalPropertyTypes compliance.
-        const errorObj: MetaSendError = {
-          code: 'META_API_ERROR',
-          ...(body.error?.code !== undefined ? { metaCode: body.error.code } : {}),
-          ...(body.error?.message !== undefined ? { detail: body.error.message } : {}),
-        };
-        return err(errorObj);
-      }
-      const wamid = body.messages?.[0]?.id;
-      if (!wamid) {
-        return err({
-          code: 'META_API_ERROR',
-          detail: 'missing wamid in 2xx response',
-        } as MetaSendError);
-      }
-      return ok({ wamid, status: body.messages?.[0]?.message_status ?? 'accepted' });
     } catch (cause) {
+      // Only genuine transport failures (fetch rejecting) are NETWORK_ERROR.
       return err({ code: 'NETWORK_ERROR' as const, cause });
     }
+
+    // Read the body defensively — a non-JSON body must not be confused with a
+    // transport failure. Parse from text so a malformed body never throws here.
+    const rawText = await res.text().catch(() => '');
+    let body: MetaApiResponse | null = null;
+    try {
+      body = rawText === '' ? null : (JSON.parse(rawText) as MetaApiResponse);
+    } catch {
+      body = null;
+    }
+
+    // Check the HTTP status FIRST. A non-2xx response is a Meta API error
+    // regardless of whether the body parsed as JSON.
+    if (!res.ok) {
+      // Use explicit undefined checks for exactOptionalPropertyTypes compliance.
+      // Fall back to the HTTP status as metaCode when no Meta error code is present.
+      const errorObj: MetaSendError = {
+        code: 'META_API_ERROR',
+        ...(body?.error?.code !== undefined
+          ? { metaCode: body.error.code }
+          : { metaCode: res.status }),
+        ...(body?.error?.message !== undefined ? { detail: body.error.message } : {}),
+      };
+      return err(errorObj);
+    }
+
+    // 2xx — require a parseable body with a wamid.
+    const wamid = body?.messages?.[0]?.id;
+    if (!wamid) {
+      return err({
+        code: 'META_API_ERROR',
+        detail: 'missing wamid in 2xx response',
+      } as MetaSendError);
+    }
+    return ok({ wamid, status: body?.messages?.[0]?.message_status ?? 'accepted' });
   },
 });
 
