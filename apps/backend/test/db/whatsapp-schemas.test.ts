@@ -30,6 +30,7 @@ describe('whatsappAccountsTable — schema shape', () => {
     expect(cols).toContain('displayPhoneNumber');
     expect(cols).toContain('wabaId');
     expect(cols).toContain('isActive');
+    expect(cols).toContain('accessToken');
     expect(cols).toContain('createdAt');
     expect(cols).toContain('updatedAt');
     expect(cols).toContain('deletedAt');
@@ -50,12 +51,14 @@ describe('whatsappAccountsTable — schema shape', () => {
       displayPhoneNumber: '+51987654321',
       wabaId: 'waba-123',
       isActive: true,
+      accessToken: null,
       createdAt: new Date(),
       updatedAt: new Date(),
       deletedAt: null,
     };
     expect(sample.id).toBe('uuid');
     expect(sample.deletedAt).toBeNull();
+    expect(sample.accessToken).toBeNull();
   });
 });
 
@@ -76,12 +79,8 @@ describe('whatsappMessagesTable — schema shape', () => {
     expect(cols).toContain('textBody');
     expect(cols).toContain('rawPayload');
     expect(cols).toContain('receivedAt');
+    expect(cols).toContain('direction');
     expect(cols).toContain('createdAt');
-  });
-
-  it('does NOT export direction column', () => {
-    const cols = Object.keys(whatsappMessagesTable);
-    expect(cols).not.toContain('direction');
   });
 
   it('WhatsappMessage type has the expected shape (compile-time guard)', () => {
@@ -96,9 +95,11 @@ describe('whatsappMessagesTable — schema shape', () => {
       textBody: 'Hello',
       rawPayload: { key: 'value' },
       receivedAt: new Date(),
+      direction: 'inbound',
       createdAt: new Date(),
     };
     expect(sample.wamid).toBe('wamid_001');
     expect(sample.contactId).toBe('contact-uuid');
+    expect(sample.direction).toBe('inbound');
   });
 });
