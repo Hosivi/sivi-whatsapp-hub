@@ -90,6 +90,7 @@ export type TestDb = {
     tenantId: string;
     displayPhoneNumber: string;
     wabaId: string;
+    accessToken?: string | null;
   }): Promise<void>;
   /** Truncate all domain tables (admin bypasses RLS). */
   truncate(): Promise<void>;
@@ -164,13 +165,14 @@ export async function createTestDb(): Promise<TestDb> {
       });
     },
 
-    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId }) {
+    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId, accessToken }) {
       // Insert directly via admin connection (bypasses RLS).
       await adminDb.insert(whatsappAccountsTable).values({
         tenantId,
         phoneNumberId,
         displayPhoneNumber,
         wabaId,
+        ...(accessToken !== undefined ? { accessToken } : {}),
       });
     },
 
