@@ -170,7 +170,7 @@ describe('POST /whatsapp-send — integration tests', () => {
   // (a) Happy path
   // -------------------------------------------------------------------------
 
-  it('(a) happy path: configured account + valid body → 200, outbound row persisted', async () => {
+  it('(a) happy path: non-canonical "to" → 200; egress + persisted phone normalized', async () => {
     await db.seedWhatsappAccount({
       phoneNumberId: PHONE_NUMBER_ID,
       tenantId: TENANT_A,
@@ -179,22 +179,33 @@ describe('POST /whatsapp-send — integration tests', () => {
       accessToken: 'tok-abc',
     });
 
-    const res = await sendRequest(app, TENANT_A, { to: RECIPIENT_PHONE, text: SEND_TEXT });
+    // '+987654321' (Peru mobile typed WITHOUT the country code) passes the route
+    // E.164 regex AND normalizes to RECIPIENT_PHONE ('+51987654321'). It proves
+    // the egress value and the persisted from_phone_e164 are the NORMALIZED form.
+    const rawTo = '+987654321';
+    const callsBefore = meta.calls.length;
+    const res = await sendRequest(app, TENANT_A, { to: rawTo, text: SEND_TEXT });
     expect(res.status).toBe(200);
 
     const body = await res.json();
     expect(body.wamid).toBe('wamid-fake-1');
     expect(body.status).toBe('accepted');
 
-    // Check DB row
+    // The value handed to Meta is the NORMALIZED phone, not the raw input.
+    expect(meta.calls.length).toBe(callsBefore + 1);
+    const lastCall = meta.calls[meta.calls.length - 1];
+    expect(lastCall?.to).toBe(RECIPIENT_PHONE);
+    expect(lastCall?.to).not.toBe(rawTo);
+
+    // Check DB row — persisted from_phone_e164 is the NORMALIZED phone.
     const messages = await getMessages(db, TENANT_A);
     expect(messages).toHaveLength(1);
-    const msg = messages[0]!;
-    expect(msg.direction).toBe('outbound');
-    expect(msg.from_phone_e164).toBe(RECIPIENT_PHONE);
-    expect(msg.wamid).toBe('wamid-fake-1');
-    expect(msg.contact_id).not.toBeNull();
-    expect(msg.received_at).not.toBeNull();
+    const msg = messages[0];
+    expect(msg?.direction).toBe('outbound');
+    expect(msg?.from_phone_e164).toBe(RECIPIENT_PHONE);
+    expect(msg?.wamid).toBe('wamid-fake-1');
+    expect(msg?.contact_id).not.toBeNull();
+    expect(msg?.received_at).not.toBeNull();
   });
 
   // -------------------------------------------------------------------------

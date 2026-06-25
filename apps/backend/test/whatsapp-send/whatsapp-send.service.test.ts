@@ -91,6 +91,8 @@ function makeDeps(
 
 const TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const SEND_INPUT = { to: '+51987654321', text: 'Hola' };
+// Canonical Peru E.164 that '+987654321' (no country code) normalizes to.
+const NORMALIZED_RECIPIENT = '+51987654321';
 
 // ---------------------------------------------------------------------------
 // resolveActiveAccount unit tests
@@ -196,8 +198,19 @@ describe('sendWhatsappText: Meta invocation', () => {
     expect(meta.calls).toHaveLength(1);
     expect(meta.calls[0]?.phoneNumberId).toBe('pnid-1');
     expect(meta.calls[0]?.accessToken).toBe('tok-abc');
-    expect(meta.calls[0]?.to).toBe(SEND_INPUT.to);
     expect(meta.calls[0]?.text).toBe(SEND_INPUT.text);
+  });
+
+  it('egress normalization: non-canonical "to" is normalized BEFORE reaching Meta', async () => {
+    // '+987654321' passes the route's E.164 regex (/^\+[1-9]\d{1,14}$/) AND
+    // normalizePhoneE164 rewrites it to the canonical Peru E.164 '+51987654321'.
+    // The value sent to Meta MUST be the normalized one, not the raw input.
+    const meta = createFakeMetaClient();
+    const deps = makeDeps([{ phone_number_id: 'pnid-1', access_token: 'tok-abc' }], meta);
+    await sendWhatsappText(deps, TENANT_ID, { to: '+987654321', text: 'Hola' });
+    expect(meta.calls).toHaveLength(1);
+    expect(meta.calls[0]?.to).toBe(NORMALIZED_RECIPIENT);
+    expect(meta.calls[0]?.to).not.toBe('+987654321');
   });
 
   it('fake.calls[0].accessToken matches account row accessToken', async () => {
@@ -247,8 +260,18 @@ describe('sendWhatsappText: Meta error mapping', () => {
 // ---------------------------------------------------------------------------
 
 describe('sendWhatsappText: success path', () => {
-  it('valid account + Meta ok → ok({ wamid, status })', async () => {
+  it('valid account + Meta ok → ok({ wamid, status }); egress + persisted phone are normalized', async () => {
     const meta = createFakeMetaClient();
+
+    // '+987654321' (Peru mobile typed WITHOUT the country code) passes the route
+    // E.164 regex AND normalizes to '+51987654321'. Both the value sent to Meta
+    // and the persisted from_phone_e164 MUST be the normalized canonical form.
+    const RAW_TO = '+987654321';
+
+    // Captures the INSERT into whatsapp_messages so we can assert the bound
+    // from_phone_e164 value. Drizzle's sql template exposes interpolated values
+    // as non-StringChunk entries in queryChunks.
+    let insertChunks: unknown[] = [];
 
     // Two-call withTenant: first is the account read, second is the write tx.
     let callCount = 0;
@@ -266,7 +289,7 @@ describe('sendWhatsappText: success path', () => {
       const fakeContact = {
         id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
         tenantId: TENANT_ID,
-        phoneE164: SEND_INPUT.to,
+        phoneE164: NORMALIZED_RECIPIENT,
         fullName: null,
         source: 'whatsapp',
         tags: [],
@@ -289,7 +312,10 @@ describe('sendWhatsappText: success path', () => {
           returning: vi.fn().mockResolvedValue([fakeContact]),
         }),
       });
-      const mockExecute = vi.fn().mockResolvedValue([]);
+      const mockExecute = vi.fn().mockImplementation((query: { queryChunks?: unknown[] }) => {
+        if (query?.queryChunks) insertChunks = query.queryChunks;
+        return Promise.resolve([]);
+      });
       const fakeTx = {
         select: mockSelect,
         insert: mockInsert,
@@ -320,12 +346,23 @@ describe('sendWhatsappText: success path', () => {
       meta,
     };
 
-    const result = await sendWhatsappText(deps, TENANT_ID, SEND_INPUT);
+    const result = await sendWhatsappText(deps, TENANT_ID, { to: RAW_TO, text: SEND_INPUT.text });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.wamid).toBe('wamid-fake-1');
       expect(result.value.status).toBe('accepted');
     }
+
+    // The value sent to Meta is the NORMALIZED phone, not the raw input.
+    expect(meta.calls).toHaveLength(1);
+    expect(meta.calls[0]?.to).toBe(NORMALIZED_RECIPIENT);
+    expect(meta.calls[0]?.to).not.toBe(RAW_TO);
+
+    // The persisted from_phone_e164 binding is the NORMALIZED phone, not the raw input.
+    // Drizzle interpolates bound values as plain (non-StringChunk) queryChunks entries.
+    const boundValues = insertChunks.filter((chunk) => typeof chunk === 'string');
+    expect(boundValues).toContain(NORMALIZED_RECIPIENT);
+    expect(boundValues).not.toContain(RAW_TO);
   });
 });
 

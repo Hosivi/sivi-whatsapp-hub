@@ -122,7 +122,7 @@ export const sendWhatsappText = async (
   const sendResult = await deps.meta.sendText({
     phoneNumberId,
     accessToken,
-    to: input.to,
+    to: recipientPhoneE164,
     text: input.text,
   });
   if (!sendResult.ok) return err(mapMetaError(sendResult.error));
