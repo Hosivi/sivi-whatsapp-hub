@@ -1,0 +1,218 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -----------------------------------------------------------------------
+   Design tokens — verbatim from design-reference/WhatsApp-Inbound-Console.dc.html
+   Light theme (default)
+   ----------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --app-bg: #f7f7f8;
+  --header-bg: #fff;
+  --card-bg: #fff;
+  --card-border: #e4e4e7;
+  --inner-bg: #f4f4f5;
+  --subtle-bg: #fcfcfd;
+  --divider: #f0f0f1;
+  --input-bg: #fff;
+  --input-border: #e4e4e7;
+
+  --fg: #18181b;
+  --fg2: #3f3f46;
+  --muted: #71717a;
+  --faint: #a1a1aa;
+
+  --green: #25d366;
+  --green-hover: #1eb858;
+  --green-send: #34c46f;
+  --green-sent: #16a34a;
+  --on-green: #fff;
+
+  --bubble-bg: #d9fdd3;
+  --bubble-border: #bbf0b0;
+  --bubble-text: #111b21;
+  --bubble-time: #9ca3af;
+  --check: #53bdeb;
+
+  --ok-bg: #ecfdf3;
+  --ok-text: #067647;
+  --ok-border: #abefc6;
+
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --danger-text: #b42318;
+
+  --warn-bg: #fffbeb;
+  --warn-border: #fde68a;
+  --warn-text: #92400e;
+  --warn-icon: #d97706;
+  --warn-code-bg: #fef3c7;
+  --warn-input-border: #fbbf24;
+
+  --dot-on: #16a34a;
+  --dot-off: #dc2626;
+
+  --chip-bg: #f4f4f5;
+  --chip-border: #e4e4e7;
+  --chip-text: #52525b;
+  --avatar-bg: #e7f9ee;
+  --avatar-text: #0f7a43;
+
+  --skel-a: #ececee;
+  --skel-b: #f6f6f7;
+  --hover: #fafafa;
+  --toggle-off: #d4d4d8;
+  --placeholder: #a1a1aa;
+}
+
+/* -----------------------------------------------------------------------
+   Kanagawa dark theme
+   ----------------------------------------------------------------------- */
+[data-theme="kanagawa"] {
+  color-scheme: dark;
+  --app-bg: #16161d;
+  --header-bg: #1f1f28;
+  --card-bg: #1f1f28;
+  --card-border: #2a2a37;
+  --inner-bg: #181820;
+  --subtle-bg: #1a1a22;
+  --divider: #2a2a37;
+  --input-bg: #16161d;
+  --input-border: #363646;
+
+  --fg: #dcd7ba;
+  --fg2: #c8c093;
+  --muted: #8a8779;
+  --faint: #6f6e66;
+
+  --green: #98bb6c;
+  --green-hover: #a8c97c;
+  --green-send: #87a85d;
+  --green-sent: #98bb6c;
+  --on-green: #1f1f28;
+
+  --bubble-bg: #2b3328;
+  --bubble-border: #3f4d36;
+  --bubble-text: #dcd7ba;
+  --bubble-time: #8a8779;
+  --check: #7fb4ca;
+
+  --ok-bg: #2b3328;
+  --ok-text: #98bb6c;
+  --ok-border: #4d5e42;
+
+  --danger: #c34043;
+  --danger-bg: #43242b;
+  --danger-border: #6e3a40;
+  --danger-text: #e46876;
+
+  --warn-bg: #39342a;
+  --warn-border: #5c5340;
+  --warn-text: #e6c384;
+  --warn-icon: #ff9e3b;
+  --warn-code-bg: #4a4332;
+  --warn-input-border: #c0a36e;
+
+  --dot-on: #98bb6c;
+  --dot-off: #ff5d62;
+
+  --chip-bg: #2a2a37;
+  --chip-border: #363646;
+  --chip-text: #c8c093;
+  --avatar-bg: #2b3328;
+  --avatar-text: #98bb6c;
+
+  --skel-a: #24242f;
+  --skel-b: #2f2f3d;
+  --hover: #2a2a37;
+  --toggle-off: #363646;
+  --placeholder: #6f6e66;
+}
+
+/* -----------------------------------------------------------------------
+   Global resets and animations
+   ----------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+input::placeholder {
+  color: var(--placeholder);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cardIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+    box-shadow: 0 0 0 2px var(--green);
+  }
+  60% {
+    opacity: 1;
+    transform: none;
+    box-shadow: 0 0 0 2px var(--green);
+  }
+  100% {
+    transform: none;
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -450px 0;
+  }
+  100% {
+    background-position: 450px 0;
+  }
+}
+
+@keyframes ping {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--dot-on) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(0, 0, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--toggle-off);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}

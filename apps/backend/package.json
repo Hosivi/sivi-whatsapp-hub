@@ -8,9 +8,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "biome check .",
-    "dev": "tsx watch src/main.ts",
-    "start": "node dist/main.js",
-    "migrate": "tsx src/db/migrate.ts"
+    "dev": "tsx watch --env-file-if-exists=../../.env --env-file-if-exists=.env src/main.ts",
+    "dev:local": "tsx watch dev-local.mjs",
+    "start": "node --env-file-if-exists=../../.env --env-file-if-exists=.env dist/main.js",
+    "migrate": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/migrate.ts",
+    "seed:dev": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/seed-dev.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",

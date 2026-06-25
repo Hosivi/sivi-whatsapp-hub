@@ -25,6 +25,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     LOG_LEVEL: 'silent',
     WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
     WHATSAPP_APP_SECRET: 'test-app-secret',
+    ENABLE_DEV_ENDPOINTS: false,
     ...overrides,
   };
 }

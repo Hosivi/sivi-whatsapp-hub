@@ -21,6 +21,8 @@ const envSchema = z.object({
   DATABASE_WEBHOOK_URL: z.string().min(1),
   // Optional: prod password for app_webhook role (mirrors APP_RLS_PASSWORD).
   APP_WEBHOOK_PASSWORD: z.string().optional(),
+  // Dev-only: mount /dev/* routes + permissive CORS when true. Default false = prod-safe.
+  ENABLE_DEV_ENDPOINTS: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,0 +1,31 @@
+# docker-compose.dev.yml — dedicated LOCAL Postgres for sivi-whatsapp-hub dev.
+#
+# Isolated from other projects: own container name + host port 5434
+# (5432 = allindrop_postgres, 5433 = sivihub_postgres are taken).
+# Dev-only throwaway credentials — NOT for production.
+#
+#   Start:  docker compose -f docker-compose.dev.yml up -d --wait
+#   Stop:   docker compose -f docker-compose.dev.yml down
+#   Reset:  docker compose -f docker-compose.dev.yml down -v   (drops the volume)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sivi-whatsapp-hub-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: sivi_whatsapp_hub
+    ports:
+      - "5434:5432"
+    volumes:
+      - sivi_whatsapp_hub_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sivi_whatsapp_hub"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  sivi_whatsapp_hub_pgdata:

@@ -22,15 +22,25 @@
  *   PATCH  /contacts/:id     → 200 Contact
  *   DELETE /contacts/:id     → 204
  *
+ * When deps present AND ENABLE_DEV_ENDPOINTS=true:
+ *   CORS   * (dev-only: any http://localhost:<port> origin allowed, gated by ENABLE_DEV_ENDPOINTS)
+ *   POST   /dev/webhook-sign → 200 { payload, signatureHeader, wamid }
+ *
+ * Always when deps present:
+ *   GET    /whatsapp-messages → 200 { data: MessageDTO[] } (tenant middleware)
+ *
  * Functional composition — no DI container, no classes, no decorators.
  */
 
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import type { Env } from './config/env.js';
 import { createContactsRoute } from './contacts/contacts.route.js';
 import { createHealthRoute } from './core/health/health.route.js';
 import type { DbClient } from './db/client.js';
+import { createDevRoute } from './dev/webhook-sign.route.js';
 import { createWhatsappWebhookRoute } from './webhooks/whatsapp.route.js';
+import { createWhatsappMessagesRoute } from './whatsapp-messages/whatsapp-messages.route.js';
 
 export type AppDeps = {
   readonly db: DbClient;
@@ -62,10 +72,24 @@ export function buildApp(deps?: AppDeps): Hono {
   app.route('/', createHealthRoute());
 
   if (deps) {
+    // Dev-only routes + CORS — gated by ENABLE_DEV_ENDPOINTS (default false = prod-safe).
+    // Guard checked at app construction time (not per-request).
+    if (deps.env.ENABLE_DEV_ENDPOINTS) {
+      // Dev CORS: allow any localhost port so the web app can run on whatever
+      // port is free (3000/3003/etc.) without clashing with other local projects.
+      // Dev-only — this whole block is gated by ENABLE_DEV_ENDPOINTS (prod-inert).
+      app.use(
+        '*',
+        cors({ origin: (origin) => (/^http:\/\/localhost:\d+$/.test(origin) ? origin : null) }),
+      );
+      app.route('/dev', createDevRoute(deps));
+    }
+
     app.route('/contacts', createContactsRoute(deps));
     // WhatsApp webhook — NO tenant middleware (tenant resolved from phone_number_id).
-    // Slice 1: stub only. Slice 2 implements the real GET/POST handlers.
     app.route('/webhooks/whatsapp', createWhatsappWebhookRoute(deps));
+    // Always mounted (not dev-gated) — tenant-scoped read of persisted messages.
+    app.route('/whatsapp-messages', createWhatsappMessagesRoute(deps));
   }
 
   return app;

@@ -68,6 +68,8 @@ export type TestDb = {
   readonly withTenant: TenantRunner;
   /** Drizzle handle connected as superuser — bypasses RLS. Use for test setup only. */
   readonly adminQuery: <T>(run: (tx: PostgresJsDatabase) => Promise<T>) => Promise<T>;
+  /** Raw postgres.js superuser handle — use for seed-dev tests and schema bootstrapping only. */
+  readonly adminSql: postgres.Sql;
   /** Raw app_rls connection string (for direct-client tests). */
   readonly appRlsConnectionString: string;
   /**
@@ -149,6 +151,7 @@ export async function createTestDb(): Promise<TestDb> {
   return {
     withTenant,
     adminQuery,
+    adminSql,
     appRlsConnectionString,
 
     async seedTenant(tenantId, data) {
