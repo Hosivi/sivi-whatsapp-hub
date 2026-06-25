@@ -88,6 +88,26 @@ const MessageCard: FC<MessageCardProps> = ({ message }) => {
           </div>
         </div>
         <div style={{ flex: 1 }} />
+        {/* Direction badge */}
+        <span
+          style={{
+            flex: '0 0 auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 8px',
+            borderRadius: 20,
+            background:
+              message.direction === 'outbound'
+                ? 'color-mix(in srgb, var(--blue, #3b82f6) 15%, transparent)'
+                : 'var(--chip-bg)',
+            color: message.direction === 'outbound' ? 'var(--blue, #3b82f6)' : 'var(--chip-text)',
+            border: `1px solid ${message.direction === 'outbound' ? 'var(--blue, #3b82f6)' : 'var(--chip-border)'}`,
+          }}
+        >
+          {message.direction === 'outbound' ? 'Enviado' : 'Recibido'}
+        </span>
         <span
           style={{
             flex: '0 0 auto',
