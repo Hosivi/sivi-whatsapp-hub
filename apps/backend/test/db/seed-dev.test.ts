@@ -46,9 +46,10 @@ describe('seed-dev (idempotent)', () => {
     expect(rows.length).toBe(1);
     expect(rows[0]?.tenantId).toBe(DEV_TENANT_ID);
     expect(rows[0]?.deletedAt).toBeNull();
+    expect(rows[0]?.accessToken).toBe('dev-access-token');
   });
 
-  it('(b) run twice → still exactly one row, no error thrown', async () => {
+  it('(b) run twice → still exactly one row, no error thrown, access_token preserved', async () => {
     // Already seeded once in (a). Run again.
     await expect(runDevSeed(db.adminSql)).resolves.not.toThrow();
 
@@ -60,6 +61,7 @@ describe('seed-dev (idempotent)', () => {
     );
 
     expect(rows.length).toBe(1);
+    expect(rows[0]?.accessToken).toBe('dev-access-token');
   });
 
   it('exports DEV_TENANT_ID and DEV_PHONE_NUMBER_ID as non-empty strings', () => {

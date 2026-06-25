@@ -20,6 +20,7 @@ import type { Env } from '../../src/config/env.js';
 import { routeContact } from '../../src/contacts/contacts.routing.js';
 import { contactLeadOutboxTable } from '../../src/db/schema/contact-lead-outbox.schema.js';
 import { contactsTable } from '../../src/db/schema/contacts.schema.js';
+import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -40,6 +41,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_APP_SECRET: 'test-app-secret',
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
+    WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,
   };
 }
@@ -53,7 +55,7 @@ let app: ReturnType<typeof buildApp>;
 
 beforeAll(async () => {
   db = await createTestDb();
-  app = buildApp({ db, env: makeEnv() });
+  app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
 }, 120_000);
 
 afterAll(async () => {

@@ -14,6 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { whatsappMessagesTable } from '../../src/db/schema/whatsapp-messages.schema.js';
+import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -47,6 +48,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_APP_SECRET: APP_SECRET,
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
+    WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,
   };
 }
@@ -185,7 +187,7 @@ describe('/webhooks/whatsapp', () => {
 
   beforeAll(async () => {
     testDb = await createTestDb();
-    app = buildApp({ db: testDb, env: makeEnv() });
+    app = buildApp({ db: testDb, env: makeEnv(), meta: createFakeMetaClient() });
   });
 
   beforeEach(async () => {
@@ -513,7 +515,7 @@ describe('/webhooks/whatsapp', () => {
         close: () => Promise.resolve(),
       };
 
-      const brokenApp = buildApp({ db: brokenDb, env: makeEnv() });
+      const brokenApp = buildApp({ db: brokenDb, env: makeEnv(), meta: createFakeMetaClient() });
       const payload = makeMetaPayload({ wamid: 'db_error_wamid' });
       const res = await postWebhook(brokenApp, payload);
       expect(res.status).toBe(200);

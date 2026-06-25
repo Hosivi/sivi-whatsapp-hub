@@ -23,6 +23,8 @@ const envSchema = z.object({
   APP_WEBHOOK_PASSWORD: z.string().optional(),
   // Dev-only: mount /dev/* routes + permissive CORS when true. Default false = prod-safe.
   ENABLE_DEV_ENDPOINTS: z.coerce.boolean().default(false),
+  // Meta Graph API version for outbound sends (injected to createMetaClient). Default v21.0.
+  WHATSAPP_META_API_VERSION: z.string().min(1).default('v21.0'),
 });
 
 export type Env = z.infer<typeof envSchema>;

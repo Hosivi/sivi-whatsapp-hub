@@ -17,6 +17,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
+import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -35,6 +36,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_APP_SECRET: 'test-app-secret',
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
+    WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,
   };
 }
@@ -59,7 +61,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(a) ENABLE_DEV_ENDPOINTS=false → POST /dev/webhook-sign returns 404', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: false }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: false }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -73,7 +75,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(b) ENABLE_DEV_ENDPOINTS=true → POST /dev/webhook-sign returns 200 with { payload, signatureHeader, wamid }', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -94,7 +96,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(c) flag on + missing text field → 400', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -108,7 +110,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(d) wamid differs on two consecutive identical calls', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const body = JSON.stringify({ phone: '+51987654321', text: 'Same text' });
     const headers = { 'Content-Type': 'application/json' };
 
@@ -126,7 +128,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(e) flag on → OPTIONS /dev/webhook-sign with Origin: http://localhost:3000 includes Access-Control-Allow-Origin', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'OPTIONS',
       headers: {
@@ -143,7 +145,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(e2) flag on + non-localhost Origin → Access-Control-Allow-Origin is absent', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'OPTIONS',
       headers: {
@@ -160,7 +162,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(e3) flag on + Origin: http://localhost:3003 → Access-Control-Allow-Origin: http://localhost:3003', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: true }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'OPTIONS',
       headers: {
@@ -177,7 +179,7 @@ describe('/dev/webhook-sign', () => {
   // -------------------------------------------------------------------------
 
   it('(f) flag off → no Access-Control-Allow-Origin on any request', async () => {
-    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: false }) });
+    const app = buildApp({ db, env: makeEnv({ ENABLE_DEV_ENDPOINTS: false }), meta: createFakeMetaClient() });
     const res = await app.request('/dev/webhook-sign', {
       method: 'POST',
       headers: {

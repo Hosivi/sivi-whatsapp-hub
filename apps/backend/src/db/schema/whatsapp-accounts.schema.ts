@@ -2,8 +2,8 @@
  * whatsapp-accounts.schema.ts — Drizzle schema for the whatsapp_accounts table.
  *
  * Stores the per-tenant WhatsApp business phone number configuration.
- * Credentials (WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN) are GLOBAL env vars —
- * no per-row secret columns exist here (see design ADR: Credential model = GLOBAL).
+ * Global credentials (WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN) remain as env vars.
+ * Per-tenant outbound credentials are stored in access_token (see below).
  *
  * Column notes:
  * - phone_number_id: Meta's internal phone number identifier (not the E.164 number).
@@ -11,6 +11,8 @@
  * - waba_id: WhatsApp Business Account ID.
  * - is_active: soft-toggle; kept for forward-compat without soft-delete.
  * - deleted_at: soft-delete sentinel; NULL = active.
+ * - access_token: per-tenant Meta System User Bearer token for outbound sends
+ *   (NULL = outbound not configured). Never logged. Added in migration 0003.
  * - Partial UNIQUE index on phone_number_id WHERE deleted_at IS NULL (in migration SQL).
  */
 
@@ -24,6 +26,7 @@ export const whatsappAccountsTable = pgTable('whatsapp_accounts', {
   displayPhoneNumber: text('display_phone_number').notNull(),
   wabaId: text('waba_id').notNull(),
   isActive: boolean('is_active').default(true).notNull(),
+  accessToken: text('access_token'),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
     .notNull()
     .default(sql`now()`),
@@ -44,6 +47,7 @@ export type WhatsappAccount = {
   readonly displayPhoneNumber: string;
   readonly wabaId: string;
   readonly isActive: boolean;
+  readonly accessToken: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly deletedAt: Date | null;
@@ -58,6 +62,7 @@ export const mapRowToWhatsappAccount = (
   displayPhoneNumber: row.displayPhoneNumber,
   wabaId: row.wabaId,
   isActive: row.isActive,
+  accessToken: row.accessToken ?? null,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
   deletedAt: row.deletedAt ?? null,

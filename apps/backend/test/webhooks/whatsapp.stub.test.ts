@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import type { DbClient } from '../../src/db/client.js';
+import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 
 function makeEnv(overrides?: Partial<Env>): Env {
   return {
@@ -26,6 +27,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
     WHATSAPP_APP_SECRET: 'test-app-secret',
     ENABLE_DEV_ENDPOINTS: false,
+    WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,
   };
 }
@@ -40,14 +42,14 @@ const mockDb: DbClient = {
 
 describe('GET /webhooks/whatsapp — stub mount', () => {
   it('returns a non-404 response (route is mounted in the app)', async () => {
-    const app = buildApp({ db: mockDb, env: makeEnv() });
+    const app = buildApp({ db: mockDb, env: makeEnv(), meta: createFakeMetaClient() });
     const res = await app.request('/webhooks/whatsapp');
     // Stub returns 501 — that is NOT 404, confirming the route is registered
     expect(res.status).not.toBe(404);
   });
 
   it('/webhooks/whatsapp is independent of the /contacts route', async () => {
-    const app = buildApp({ db: mockDb, env: makeEnv() });
+    const app = buildApp({ db: mockDb, env: makeEnv(), meta: createFakeMetaClient() });
     // Both routes must be non-404
     const webhookRes = await app.request('/webhooks/whatsapp');
     const healthRes = await app.request('/health');

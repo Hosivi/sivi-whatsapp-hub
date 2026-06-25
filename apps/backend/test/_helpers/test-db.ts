@@ -57,7 +57,7 @@ import { err, ok } from '../../src/shared/result.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
-const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql'] as const;
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql', '0003_outbound.sql'] as const;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -90,6 +90,7 @@ export type TestDb = {
     tenantId: string;
     displayPhoneNumber: string;
     wabaId: string;
+    accessToken?: string | null;
   }): Promise<void>;
   /** Truncate all domain tables (admin bypasses RLS). */
   truncate(): Promise<void>;
@@ -164,13 +165,14 @@ export async function createTestDb(): Promise<TestDb> {
       });
     },
 
-    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId }) {
+    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId, accessToken }) {
       // Insert directly via admin connection (bypasses RLS).
       await adminDb.insert(whatsappAccountsTable).values({
         tenantId,
         phoneNumberId,
         displayPhoneNumber,
         wabaId,
+        ...(accessToken !== undefined ? { accessToken } : {}),
       });
     },
 
