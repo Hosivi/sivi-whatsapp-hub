@@ -20,6 +20,7 @@
 import { sql as rawSql } from 'drizzle-orm';
 import type { AppDeps } from '../app.js';
 import { upsertContactTx } from '../contacts/contacts.repository.js';
+import { normalizePhoneE164 } from '../contacts/phone-e164.js';
 import type { TenantRunner } from '../db/client.js';
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
@@ -49,8 +50,8 @@ export type SendOk = {
  * Uses raw SQL to SELECT only the columns needed (avoids schema drift risk).
  * LIMIT 2 to cheaply detect misconfiguration (>1 active account).
  *
- * - 0 rows → NO_ACTIVE_ACCOUNT
- * - >1 rows → NO_ACTIVE_ACCOUNT (misconfig)
+ * - 0 rows → NO_ACTIVE_ACCOUNT (→ 404)
+ * - >1 rows → MULTIPLE_ACTIVE_ACCOUNTS (misconfig → 422)
  * - 1 row + access_token IS NULL → OUTBOUND_NOT_CONFIGURED
  * - 1 row + access_token set → ok({ phoneNumberId, accessToken })
  */
@@ -70,8 +71,12 @@ export const resolveActiveAccount = async (
     return result as unknown as Array<{ phone_number_id: string; access_token: string | null }>;
   });
 
-  if (rows.length !== 1) {
+  if (rows.length === 0) {
     return err({ code: 'NO_ACTIVE_ACCOUNT' });
+  }
+
+  if (rows.length > 1) {
+    return err({ code: 'MULTIPLE_ACTIVE_ACCOUNTS' });
   }
 
   // rows.length === 1 at this point; index access is safe.
@@ -104,7 +109,16 @@ export const sendWhatsappText = async (
   if (!accountResult.ok) return accountResult;
   const { phoneNumberId, accessToken } = accountResult.value;
 
-  // 2) Call Meta OUTSIDE any tx (network call — do NOT hold a Postgres connection open).
+  // 2) Normalize the recipient with the SAME Peru rule the inbound webhook /
+  //    contact upsert use. A generic E.164 number that is not a valid Peru
+  //    number is rejected BEFORE calling Meta — do NOT send and do NOT persist.
+  const normalizedTo = normalizePhoneE164(input.to);
+  if (!normalizedTo.ok) {
+    return err({ code: 'INVALID_RECIPIENT' });
+  }
+  const recipientPhoneE164 = normalizedTo.value;
+
+  // 3) Call Meta OUTSIDE any tx (network call — do NOT hold a Postgres connection open).
   const sendResult = await deps.meta.sendText({
     phoneNumberId,
     accessToken,
@@ -114,10 +128,13 @@ export const sendWhatsappText = async (
   if (!sendResult.ok) return err(mapMetaError(sendResult.error));
   const { wamid, status } = sendResult.value;
 
-  // 3) Persist the outbound row (TX#2 — atomic write: upsert contact + insert message).
+  // 4) Persist the outbound row (TX#2 — atomic write: upsert contact + insert message).
   try {
     await deps.db.withTenant(tenantId, async (tx) => {
-      const contact = await upsertContactTx(tx, tenantId, { phone: input.to, source: 'whatsapp' });
+      const contact = await upsertContactTx(tx, tenantId, {
+        phone: recipientPhoneE164,
+        source: 'whatsapp',
+      });
       if (!contact.ok) {
         throw new Error(`upsertContactTx failed: ${contact.error.code}`);
       }
@@ -130,7 +147,7 @@ export const sendWhatsappText = async (
            ${wamid},
            ${phoneNumberId},
            ${contact.value.id}::uuid,
-           ${input.to},
+           ${recipientPhoneE164},
            'text',
            ${input.text},
            ${JSON.stringify({ wamid, status })}::jsonb,

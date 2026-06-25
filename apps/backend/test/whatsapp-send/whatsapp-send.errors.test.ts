@@ -22,6 +22,14 @@ describe('sendErrorToHttpStatus', () => {
     expect(sendErrorToHttpStatus({ code: 'NO_ACTIVE_ACCOUNT' })).toBe(404);
   });
 
+  it('MULTIPLE_ACTIVE_ACCOUNTS → 422', () => {
+    expect(sendErrorToHttpStatus({ code: 'MULTIPLE_ACTIVE_ACCOUNTS' })).toBe(422);
+  });
+
+  it('INVALID_RECIPIENT → 422', () => {
+    expect(sendErrorToHttpStatus({ code: 'INVALID_RECIPIENT' })).toBe(422);
+  });
+
   it('OUTBOUND_NOT_CONFIGURED → 422', () => {
     expect(sendErrorToHttpStatus({ code: 'OUTBOUND_NOT_CONFIGURED' })).toBe(422);
   });

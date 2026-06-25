@@ -17,7 +17,9 @@ import type { MetaSendError } from '../meta/meta-client.js';
 // ---------------------------------------------------------------------------
 
 export type WhatsappSendError =
-  | { readonly code: 'NO_ACTIVE_ACCOUNT' } // 0 or >1 active accounts
+  | { readonly code: 'NO_ACTIVE_ACCOUNT' } // 0 active accounts
+  | { readonly code: 'MULTIPLE_ACTIVE_ACCOUNTS' } // >1 active accounts (misconfig)
+  | { readonly code: 'INVALID_RECIPIENT' } // `to` is not a valid Peru-normalizable number
   | { readonly code: 'OUTBOUND_NOT_CONFIGURED' } // access_token IS NULL
   | { readonly code: 'WINDOW_CLOSED' } // Meta 131047 (24h window)
   | { readonly code: 'META_API_ERROR' } // any other Meta API error
@@ -32,6 +34,10 @@ export function sendErrorToHttpStatus(error: WhatsappSendError): 404 | 422 | 502
   switch (error.code) {
     case 'NO_ACTIVE_ACCOUNT':
       return 404;
+    case 'MULTIPLE_ACTIVE_ACCOUNTS':
+      return 422;
+    case 'INVALID_RECIPIENT':
+      return 422;
     case 'OUTBOUND_NOT_CONFIGURED':
       return 422;
     case 'WINDOW_CLOSED':

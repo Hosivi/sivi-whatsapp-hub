@@ -7,12 +7,12 @@
  * STRICT TDD MODE — tests written RED before implementation.
  */
 
-import { describe, expect, it, vi } from 'vitest';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { describe, expect, it, vi } from 'vitest';
 import type { AppDeps } from '../../src/app.js';
 import type { TenantRunner } from '../../src/db/client.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
-import { err, ok } from '../../src/shared/result.js';
+import { ok } from '../../src/shared/result.js';
 import {
   resolveActiveAccount,
   sendWhatsappText,
@@ -104,14 +104,14 @@ describe('resolveActiveAccount', () => {
     if (!result.ok) expect(result.error.code).toBe('NO_ACTIVE_ACCOUNT');
   });
 
-  it('2 rows → err({ code: "NO_ACTIVE_ACCOUNT" })', async () => {
+  it('2 rows → err({ code: "MULTIPLE_ACTIVE_ACCOUNTS" })', async () => {
     const { withTenant } = makeAccountStub([
       { phone_number_id: 'p1', access_token: 'tok1' },
       { phone_number_id: 'p2', access_token: 'tok2' },
     ]);
     const result = await resolveActiveAccount(withTenant, TENANT_ID);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NO_ACTIVE_ACCOUNT');
+    if (!result.ok) expect(result.error.code).toBe('MULTIPLE_ACTIVE_ACCOUNTS');
   });
 
   it('1 row with access_token = null → err({ code: "OUTBOUND_NOT_CONFIGURED" })', async () => {
@@ -146,7 +146,7 @@ describe('sendWhatsappText: Meta not called on account errors', () => {
     expect(meta.calls).toHaveLength(0);
   });
 
-  it('2 active accounts → returns NO_ACTIVE_ACCOUNT, meta not called', async () => {
+  it('2 active accounts → returns MULTIPLE_ACTIVE_ACCOUNTS, meta not called', async () => {
     const meta = createFakeMetaClient();
     const deps = makeDeps(
       [
@@ -157,7 +157,7 @@ describe('sendWhatsappText: Meta not called on account errors', () => {
     );
     const result = await sendWhatsappText(deps, TENANT_ID, SEND_INPUT);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NO_ACTIVE_ACCOUNT');
+    if (!result.ok) expect(result.error.code).toBe('MULTIPLE_ACTIVE_ACCOUNTS');
     expect(meta.calls).toHaveLength(0);
   });
 
@@ -167,6 +167,19 @@ describe('sendWhatsappText: Meta not called on account errors', () => {
     const result = await sendWhatsappText(deps, TENANT_ID, SEND_INPUT);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('OUTBOUND_NOT_CONFIGURED');
+    expect(meta.calls).toHaveLength(0);
+  });
+
+  it('non-Peru recipient → returns INVALID_RECIPIENT, meta not called', async () => {
+    const meta = createFakeMetaClient();
+    const deps = makeDeps([{ phone_number_id: 'p1', access_token: 'tok' }], meta);
+    // Valid generic E.164 (US number) but NOT a Peru-normalizable number.
+    const result = await sendWhatsappText(deps, TENANT_ID, {
+      to: '+12025550123',
+      text: 'Hola',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('INVALID_RECIPIENT');
     expect(meta.calls).toHaveLength(0);
   });
 });

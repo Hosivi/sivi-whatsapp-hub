@@ -8,7 +8,8 @@
  * (a) Happy path: configured account + valid body → 200, outbound row persisted
  * (b) No active account → 404 NO_ACTIVE_ACCOUNT
  * (c) NULL token → 422 OUTBOUND_NOT_CONFIGURED
- * (d) >1 active account → 422 (treated as NO_ACTIVE_ACCOUNT in service, but test notes below)
+ * (d) >1 active account → 422 MULTIPLE_ACTIVE_ACCOUNTS
+ * (d2) valid generic E.164 but non-Peru recipient → 422 INVALID_RECIPIENT, Meta not called
  * (e) Soft-deleted account excluded → 404 NO_ACTIVE_ACCOUNT
  * (f) Meta 131047 → 422 WINDOW_CLOSED
  * (g) Other Meta error → 502 META_API_ERROR
@@ -29,7 +30,6 @@ import { sql as rawSql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
-import { whatsappMessagesTable } from '../../src/db/schema/whatsapp-messages.schema.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import { err } from '../../src/shared/result.js';
 import type { TestDb } from '../_helpers/test-db.js';
@@ -190,11 +190,11 @@ describe('POST /whatsapp-send — integration tests', () => {
     const messages = await getMessages(db, TENANT_A);
     expect(messages).toHaveLength(1);
     const msg = messages[0]!;
-    expect(msg['direction']).toBe('outbound');
-    expect(msg['from_phone_e164']).toBe(RECIPIENT_PHONE);
-    expect(msg['wamid']).toBe('wamid-fake-1');
-    expect(msg['contact_id']).not.toBeNull();
-    expect(msg['received_at']).not.toBeNull();
+    expect(msg.direction).toBe('outbound');
+    expect(msg.from_phone_e164).toBe(RECIPIENT_PHONE);
+    expect(msg.wamid).toBe('wamid-fake-1');
+    expect(msg.contact_id).not.toBeNull();
+    expect(msg.received_at).not.toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -235,7 +235,7 @@ describe('POST /whatsapp-send — integration tests', () => {
   // (d) >1 active account
   // -------------------------------------------------------------------------
 
-  it('(d) >1 active account → 404, zero rows', async () => {
+  it('(d) >1 active account → 422 MULTIPLE_ACTIVE_ACCOUNTS, zero rows', async () => {
     // Seed two accounts for the same tenant (admin direct insert bypasses unique index
     // since both rows need different phone_number_ids)
     await db.seedWhatsappAccount({
@@ -254,9 +254,32 @@ describe('POST /whatsapp-send — integration tests', () => {
     });
 
     const res = await sendRequest(app, TENANT_A, { to: RECIPIENT_PHONE, text: SEND_TEXT });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toBe('NO_ACTIVE_ACCOUNT');
+    expect(body.error).toBe('MULTIPLE_ACTIVE_ACCOUNTS');
+    expect(await countMessages(db, TENANT_A)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // (d2) valid generic E.164 but non-Peru recipient
+  // -------------------------------------------------------------------------
+
+  it('(d2) non-Peru E.164 "to" → 422 INVALID_RECIPIENT, Meta not called, zero rows', async () => {
+    await db.seedWhatsappAccount({
+      phoneNumberId: PHONE_NUMBER_ID,
+      tenantId: TENANT_A,
+      displayPhoneNumber: '+51111111111',
+      wabaId: 'waba_a',
+      accessToken: 'tok',
+    });
+
+    const callsBefore = meta.calls.length;
+    // Passes the route's E.164 regex but is NOT a Peru-normalizable number.
+    const res = await sendRequest(app, TENANT_A, { to: '+12025550123', text: SEND_TEXT });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toBe('INVALID_RECIPIENT');
+    expect(meta.calls.length).toBe(callsBefore); // Meta not called
     expect(await countMessages(db, TENANT_A)).toBe(0);
   });
 
@@ -454,7 +477,7 @@ describe('POST /whatsapp-send — integration tests', () => {
 
     const messages = await getMessages(db, TENANT_A);
     expect(messages).toHaveLength(1);
-    expect(messages[0]!['direction']).toBe('inbound');
+    expect(messages[0]?.direction).toBe('inbound');
   });
 
   // -------------------------------------------------------------------------
