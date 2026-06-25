@@ -57,7 +57,7 @@ import { err, ok } from '../../src/shared/result.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
-const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql'] as const;
+const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql', '0003_outbound.sql'] as const;
 
 // ---------------------------------------------------------------------------
 // Public types

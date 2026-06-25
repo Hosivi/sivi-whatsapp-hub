@@ -1,20 +1,23 @@
 /**
  * whatsapp-messages.schema.ts — Drizzle schema for the whatsapp_messages table.
  *
- * Stores raw inbound WhatsApp messages. Each row is immutable after insert.
+ * Stores both inbound and outbound WhatsApp messages. Each row is immutable after insert.
  *
  * Column notes:
  * - wamid: Meta's unique message ID; UNIQUE constraint prevents duplicate ingestion.
  * - phone_number_id: Meta's internal phone number identifier (links to whatsapp_accounts).
  * - contact_id: FK to contacts(id), NOT NULL. The contact upsert always runs before insert.
- * - from_phone_e164: sender's normalized E.164 phone number (+51XXXXXXXXX).
+ * - from_phone_e164: the CONTACT/recipient phone for both directions (+51XXXXXXXXX).
+ *   For inbound: the sender's phone. For outbound: the recipient's phone.
+ *   Semantic: "the contact's phone" — coherent for both directions. No rename for now.
  * - message_type: e.g. 'text', 'image', 'audio', etc. (raw from Meta payload).
  * - text_body: text content when message_type = 'text'; null otherwise.
  * - raw_payload: full Meta message object as JSONB (for forward-compat / debugging).
- * - received_at: timestamp from the Meta payload (not the DB insert time).
+ * - received_at: timestamp from the Meta payload (inbound) or send timestamp (outbound).
+ *   Semantic: "the event timestamp" — coherent for both directions. No rename for now.
+ * - direction: 'inbound' | 'outbound'. Added in migration 0003. Existing rows default
+ *   to 'inbound'. Use this to segregate conversation sides.
  * - created_at: DB insert time.
- *
- * No direction column — this table stores inbound messages only (YAGNI for now).
  */
 
 import { sql } from 'drizzle-orm';
@@ -34,6 +37,7 @@ export const whatsappMessagesTable = pgTable('whatsapp_messages', {
   textBody: text('text_body'),
   rawPayload: jsonb('raw_payload').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true, mode: 'date' }).notNull(),
+  direction: text('direction').notNull().default('inbound'),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
     .notNull()
     .default(sql`now()`),
@@ -54,6 +58,7 @@ export type WhatsappMessage = {
   readonly textBody: string | null;
   readonly rawPayload: unknown;
   readonly receivedAt: Date;
+  readonly direction: string;
   readonly createdAt: Date;
 };
 
@@ -70,5 +75,6 @@ export const mapRowToWhatsappMessage = (
   textBody: row.textBody ?? null,
   rawPayload: row.rawPayload,
   receivedAt: row.receivedAt,
+  direction: row.direction,
   createdAt: row.createdAt,
 });
