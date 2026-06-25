@@ -1,4 +1,5 @@
 import type { MessageDTO } from '@/lib/api';
+import { isPeru } from '@/lib/phone';
 import type { FC } from 'react';
 import MessageCard from './MessageCard';
 import WarningBanner from './WarningBanner';
@@ -10,6 +11,14 @@ interface HubPanelProps {
   autoOn: boolean;
   onAutoToggle: () => void;
   onRefresh: () => void;
+  // Outbound composer props
+  outboundTo: string;
+  outboundText: string;
+  outboundSendStatus: 'idle' | 'sending' | 'sent';
+  outboundError: string | null;
+  onOutboundToChange: (v: string) => void;
+  onOutboundTextChange: (v: string) => void;
+  onOutboundSend: () => void;
 }
 
 const SkeletonCard: FC = () => (
@@ -91,6 +100,13 @@ const HubPanel: FC<HubPanelProps> = ({
   autoOn,
   onAutoToggle,
   onRefresh,
+  outboundTo,
+  outboundText,
+  outboundSendStatus,
+  outboundError,
+  onOutboundToChange,
+  onOutboundTextChange,
+  onOutboundSend,
 }) => {
   const autoTrack = autoOn ? 'var(--green)' : 'var(--toggle-off)';
   const autoKnobLeft = autoOn ? '14px' : '2px';
@@ -315,6 +331,131 @@ const HubPanel: FC<HubPanelProps> = ({
 
         {/* Message cards */}
         {!loading && messages.map((msg) => <MessageCard key={msg.wamid} message={msg} />)}
+      </div>
+
+      {/* Outbound reply bar */}
+      <div
+        style={{
+          flex: '0 0 auto',
+          borderTop: '2px solid var(--divider)',
+          padding: '14px 16px',
+          background: 'var(--card-bg)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--muted)',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            marginBottom: 2,
+          }}
+        >
+          Enviar mensaje
+        </div>
+
+        {/* To input */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <input
+            type="text"
+            aria-label="Destinatario"
+            placeholder="Destinatario (+519...)"
+            value={outboundTo}
+            onChange={(e) => onOutboundToChange(e.target.value)}
+            style={{
+              height: 32,
+              padding: '0 10px',
+              border: '1px solid var(--card-border)',
+              borderRadius: 7,
+              background: 'var(--subtle-bg)',
+              color: 'var(--fg)',
+              fontSize: 13,
+              fontFamily: 'inherit',
+              outline: 'none',
+            }}
+          />
+          {outboundTo.length > 0 && !isPeru(outboundTo) && (
+            <p
+              style={{
+                margin: 0,
+                fontSize: 11.5,
+                color: 'var(--warning, #d97706)',
+                lineHeight: 1.4,
+              }}
+            >
+              El número no parece ser peruano (+519XXXXXXXX). El backend lo rechazará si no es
+              válido.
+            </p>
+          )}
+        </div>
+
+        {/* Text input */}
+        <input
+          type="text"
+          aria-label="Texto del mensaje"
+          placeholder="Texto del mensaje"
+          value={outboundText}
+          onChange={(e) => onOutboundTextChange(e.target.value)}
+          style={{
+            height: 32,
+            padding: '0 10px',
+            border: '1px solid var(--card-border)',
+            borderRadius: 7,
+            background: 'var(--subtle-bg)',
+            color: 'var(--fg)',
+            fontSize: 13,
+            fontFamily: 'inherit',
+            outline: 'none',
+          }}
+        />
+
+        {/* Send button */}
+        <button
+          type="button"
+          onClick={onOutboundSend}
+          disabled={outboundSendStatus !== 'idle'}
+          style={{
+            height: 34,
+            padding: '0 16px',
+            background:
+              outboundSendStatus === 'sent'
+                ? 'color-mix(in srgb, var(--green) 15%, transparent)'
+                : 'color-mix(in srgb, var(--blue, #3b82f6) 15%, transparent)',
+            border: `1px solid ${outboundSendStatus === 'sent' ? 'var(--green)' : 'var(--blue, #3b82f6)'}`,
+            borderRadius: 7,
+            color: outboundSendStatus === 'sent' ? 'var(--green)' : 'var(--blue, #3b82f6)',
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            cursor: outboundSendStatus !== 'idle' ? 'default' : 'pointer',
+            opacity: outboundSendStatus !== 'idle' ? 0.7 : 1,
+            transition: 'background .15s, border-color .15s, color .15s',
+          }}
+        >
+          {outboundSendStatus === 'sending'
+            ? 'Enviando…'
+            : outboundSendStatus === 'sent'
+              ? 'Enviado ✓'
+              : 'Enviar'}
+        </button>
+
+        {/* Inline error */}
+        {outboundError !== null && (
+          <p
+            style={{
+              margin: 0,
+              fontSize: 12,
+              color: 'var(--error, #dc2626)',
+              lineHeight: 1.4,
+            }}
+          >
+            {outboundError}
+          </p>
+        )}
       </div>
     </section>
   );

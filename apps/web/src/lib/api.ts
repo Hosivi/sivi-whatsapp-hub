@@ -23,6 +23,23 @@ export interface MessageDTO {
   text: string | null;
   type: string;
   receivedAt: string;
+  direction: string;
+}
+
+export interface SendOutboundResult {
+  wamid: string;
+  status: string;
+}
+
+/**
+ * Thrown when sendOutbound encounters a typed backend failure or a transport error.
+ * `code` matches the backend's error code (e.g. 'WINDOW_CLOSED', 'NETWORK_ERROR').
+ */
+export class SendOutboundError extends Error {
+  constructor(public readonly code: string) {
+    super(code);
+    this.name = 'SendOutboundError';
+  }
 }
 
 /**
@@ -84,4 +101,46 @@ export async function getMessages(tenantId: string = defaultTenantId): Promise<M
 
   const body = (await res.json()) as { data: MessageDTO[] };
   return body.data;
+}
+
+/**
+ * Sends an outbound WhatsApp text message via POST /whatsapp-send.
+ * - On 200: returns { wamid, status } as SendOutboundResult.
+ * - On non-2xx: throws SendOutboundError with the backend's error code.
+ * - On network/parse failure: throws SendOutboundError('NETWORK_ERROR').
+ */
+export async function sendOutbound(
+  tenantId: string,
+  to: string,
+  text: string,
+): Promise<SendOutboundResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${apiUrl}/whatsapp-send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tenant-Id': tenantId,
+      },
+      body: JSON.stringify({ to, text }),
+    });
+  } catch {
+    throw new SendOutboundError('NETWORK_ERROR');
+  }
+
+  let body: { wamid?: string; status?: string; error?: string } = {};
+  try {
+    body = (await res.json()) as { wamid?: string; status?: string; error?: string };
+  } catch {
+    if (!res.ok) {
+      throw new SendOutboundError('META_API_ERROR');
+    }
+    throw new SendOutboundError('NETWORK_ERROR');
+  }
+
+  if (!res.ok) {
+    throw new SendOutboundError(body.error ?? 'META_API_ERROR');
+  }
+
+  return { wamid: body.wamid ?? '', status: body.status ?? 'accepted' };
 }

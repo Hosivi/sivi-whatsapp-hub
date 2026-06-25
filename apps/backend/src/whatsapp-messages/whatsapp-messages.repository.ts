@@ -36,6 +36,8 @@ export type MessageDTO = {
   readonly type: string;
   /** ISO 8601 UTC timestamp string */
   readonly receivedAt: string;
+  /** 'inbound' | 'outbound' — mirrors the whatsapp_messages.direction column */
+  readonly direction: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -63,6 +65,7 @@ export async function listMessages(
         text: whatsappMessagesTable.textBody,
         type: whatsappMessagesTable.messageType,
         receivedAt: whatsappMessagesTable.receivedAt,
+        direction: whatsappMessagesTable.direction,
       })
       .from(whatsappMessagesTable)
       .leftJoin(contactsTable, eq(whatsappMessagesTable.contactId, contactsTable.id))
@@ -76,6 +79,7 @@ export async function listMessages(
       text: row.text ?? null,
       type: row.type,
       receivedAt: row.receivedAt.toISOString(),
+      direction: row.direction,
     }));
   });
 }
