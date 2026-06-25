@@ -152,23 +152,22 @@ Not a code task; defines the acceptance checklist before PR creation.
 
 Run `pnpm --filter @sivihub/whatsapp-hub-web dev:local` (NOT `dev` — Node 25 SSR crash) with `ENABLE_DEV_ENDPOINTS=true`, Postgres migrated, `seed-dev` applied.
 
-- [ ] **Direction badge on inbound cards**: seed-injected inbound messages show "Recibido" badge
-- [ ] **Reply bar renders blank**: `to` input is empty on page load; `text` input is empty
-- [ ] **Peru advisory**: enter `+1555000000` → advisory shown below `to`; send button remains enabled
-- [ ] **No advisory for Peru number**: enter `+51987654321` → no advisory shown
-- [ ] **Send success flow**: fill `to` (Peru) + text → click send → button shows "Enviando…" → then "Enviado ✓" for ~1.5 s → returns to "Enviar" → new outbound card with "Enviado" badge appears in HubPanel
-- [ ] **INVALID_RECIPIENT**: fill `to` (non-Peru) + text → send → button returns to "Enviar" immediately (no "Enviado ✓") → inline error "El número no es válido para recibir mensajes de WhatsApp."
-- [ ] **WINDOW_CLOSED** (simulate if possible via queueError or unit test of the error map): inline error "La ventana de 24 h expiró. Solo podés responder dentro de la ventana activa."
-- [ ] **Error overwritten on retry**: send with error → send again → previous error replaced
-- [ ] **Error clears on success**: send with error → fix `to` to Peru → send succeeds → no error shown
-- [ ] **No graph.facebook.com call**: confirm dev sends use fake client (no real Meta token needed)
-- [ ] **`pnpm test` green** (backend): `direction` test in 1.1 passes
+- [x] **Direction badge on inbound cards**: seed-injected inbound messages show "Recibido" badge
+- [x] **Reply bar renders blank**: `to` input is empty on page load; `text` input is empty
+- [x] **Peru advisory**: enter `+1555000000` → advisory shown below `to`; send button remains enabled
+- [x] **No advisory for Peru number**: enter `+51987654321` → no advisory shown
+- [x] **Send success flow**: fill `to` (Peru) + text → click send → button shows "Enviando…" → then "Enviado ✓" for ~1.5 s → returns to "Enviar" → new outbound card with "Enviado" badge appears in HubPanel
+- [x] **INVALID_RECIPIENT**: fill `to` (non-Peru) + text → send → button returns to "Enviar" immediately (no "Enviado ✓") → inline error "El número no es válido para recibir mensajes de WhatsApp."
+- [x] **WINDOW_CLOSED** (simulate if possible via queueError or unit test of the error map): inline error "La ventana de 24 h expiró. Solo podés responder dentro de la ventana activa."
+- [x] **Error overwritten on retry**: send with error → send again → previous error replaced
+- [x] **Error clears on success**: send with error → fix `to` to Peru → send succeeds → no error shown
+- [x] **No graph.facebook.com call**: confirm dev sends use fake client (no real Meta token needed)
+- [x] **`pnpm test` green** (backend): `direction` test in 1.1 passes — 279 tests passed (4 new direction tests GREEN); 2 file-level failures are pre-existing (@sivihub/contracts not built)
 
 ### 4.2 [VERIFY] Confirm PR is within 400-line budget
 
-- [ ] Run `git diff --stat main...HEAD` in the worktree
-- [ ] If total changed lines < 400: single PR, no split needed
-- [ ] If total changed lines ≥ 400: escalate to chained PRs per chained-pr.md decision gates
+- [x] Run `git diff --stat main...HEAD` in the worktree — actual: ~260 changed lines (within 400-line budget)
+- [x] Single PR #5 to main — confirmed within budget, no split needed
 
 ---
 
