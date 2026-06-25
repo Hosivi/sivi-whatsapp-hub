@@ -48,15 +48,25 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
   // ON CONFLICT DO NOTHING handles: the partial unique index on (phone_number_id WHERE deleted_at IS NULL).
   await sql`
     INSERT INTO whatsapp_accounts
-      (tenant_id, phone_number_id, display_phone_number, waba_id, is_active, deleted_at)
+      (tenant_id, phone_number_id, display_phone_number, waba_id, is_active, access_token, deleted_at)
     VALUES
       (${DEV_TENANT_ID}::uuid,
        ${DEV_PHONE_NUMBER_ID},
        '+51000000000',
        'dev-waba-id',
        true,
+       'dev-access-token',
        NULL)
     ON CONFLICT DO NOTHING
+  `;
+
+  // Backfill access_token for rows that already existed without the column
+  // (idempotent: only updates rows where access_token is still NULL).
+  await sql`
+    UPDATE whatsapp_accounts
+    SET access_token = 'dev-access-token'
+    WHERE phone_number_id = ${DEV_PHONE_NUMBER_ID}
+      AND access_token IS NULL
   `;
 }
 
