@@ -143,4 +143,18 @@ describe('loadEnv()', () => {
     const env = loadEnv();
     expect(env.ENABLE_DEV_ENDPOINTS).toBe(true);
   });
+
+  it('ENABLE_DEV_ENDPOINTS is false when set to "false" (only literal "true" enables it)', () => {
+    Object.assign(process.env, VALID_ENV);
+    process.env.ENABLE_DEV_ENDPOINTS = 'false';
+    const env = loadEnv();
+    expect(env.ENABLE_DEV_ENDPOINTS).toBe(false);
+  });
+
+  it('ENABLE_DEV_ENDPOINTS is false when set to "0"', () => {
+    Object.assign(process.env, VALID_ENV);
+    process.env.ENABLE_DEV_ENDPOINTS = '0';
+    const env = loadEnv();
+    expect(env.ENABLE_DEV_ENDPOINTS).toBe(false);
+  });
 });

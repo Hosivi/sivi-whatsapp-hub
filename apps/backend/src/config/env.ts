@@ -22,7 +22,13 @@ const envSchema = z.object({
   // Optional: prod password for app_webhook role (mirrors APP_RLS_PASSWORD).
   APP_WEBHOOK_PASSWORD: z.string().optional(),
   // Dev-only: mount /dev/* routes + permissive CORS when true. Default false = prod-safe.
-  ENABLE_DEV_ENDPOINTS: z.coerce.boolean().default(false),
+  // Explicit string-equality gate: ONLY the literal "true" enables dev. Any other value
+  // (unset, "false", "0", "no", …) yields false. z.coerce.boolean() is unsafe here because
+  // it coerces every non-empty string (including "false") to true.
+  ENABLE_DEV_ENDPOINTS: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
   // Meta Graph API version for outbound sends (injected to createMetaClient). Default v21.0.
   WHATSAPP_META_API_VERSION: z.string().min(1).default('v21.0'),
 });
