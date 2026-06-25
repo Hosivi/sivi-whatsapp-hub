@@ -50,7 +50,9 @@ function makeFakeTenantRunner(rows: FakeRow[]): TenantRunner {
     chainable.limit = () => Promise.resolve(rows);
 
     // Run the repository code with our fake tx.
-    return run(chainable as Parameters<typeof run>[0]);
+    // Double cast through unknown: the fake only needs to satisfy the fluent chain
+    // that listMessages actually calls — it is not a full PostgresJsDatabase.
+    return run(chainable as unknown as Parameters<typeof run>[0]);
   };
 }
 
