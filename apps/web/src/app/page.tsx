@@ -30,6 +30,10 @@ const OUTBOUND_ERROR_MESSAGES: Record<string, string> = {
   WINDOW_CLOSED: 'La ventana de 24 h expiró. Solo podés responder dentro de la ventana activa.',
   VALIDATION_ERROR: 'El número o el texto no son válidos. Revisá los campos.',
   META_API_ERROR: 'Error al comunicarse con Meta. Intentá de nuevo.',
+  // The message was already sent to Meta but failed to persist locally. Resending
+  // would deliver a duplicate to the recipient — warn the user explicitly not to retry.
+  INTERNAL_ERROR:
+    'El mensaje se envió pero hubo un problema al registrarlo. No reenvíes; verificá en el panel.',
   NETWORK_ERROR: 'No se pudo conectar con el servidor. Verificá tu conexión.',
 };
 
@@ -197,6 +201,9 @@ export default function DevConsolePage() {
     try {
       await sendOutbound(defaultTenantId, outboundTo, outboundText);
       setOutboundError(null);
+      // Clear the text on success so the user can't accidentally resend the same
+      // message (mirrors handleSend clearing the draft). Keep outboundTo for reply context.
+      setOutboundText('');
       setOutboundSendStatus('sent');
       // Trigger poll immediately so the outbound card appears
       void poll();

@@ -362,6 +362,7 @@ const HubPanel: FC<HubPanelProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <input
             type="text"
+            aria-label="Destinatario"
             placeholder="Destinatario (+519...)"
             value={outboundTo}
             onChange={(e) => onOutboundToChange(e.target.value)}
@@ -395,6 +396,7 @@ const HubPanel: FC<HubPanelProps> = ({
         {/* Text input */}
         <input
           type="text"
+          aria-label="Texto del mensaje"
           placeholder="Texto del mensaje"
           value={outboundText}
           onChange={(e) => onOutboundTextChange(e.target.value)}
