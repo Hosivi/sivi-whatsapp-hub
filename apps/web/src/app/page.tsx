@@ -4,12 +4,34 @@ import ClientSimulator, { fmtTime, type SessionBubble } from '@/components/Clien
 import Header from '@/components/Header';
 import HubPanel from '@/components/HubPanel';
 import OfflineBanner from '@/components/OfflineBanner';
-import { type MessageDTO, getMessages, postWebhook, signWebhook } from '@/lib/api';
+import {
+  type MessageDTO,
+  SendOutboundError,
+  getMessages,
+  postWebhook,
+  sendOutbound,
+  signWebhook,
+} from '@/lib/api';
 import { isPeru } from '@/lib/phone';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 type SendStatus = 'idle' | 'sending' | 'sent';
+type OutboundSendStatus = 'idle' | 'sending' | 'sent';
 type Theme = 'light' | 'kanagawa';
+
+// ---------------------------------------------------------------------------
+// Error code → Spanish message map for outbound send errors
+// ---------------------------------------------------------------------------
+const OUTBOUND_ERROR_MESSAGES: Record<string, string> = {
+  NO_ACTIVE_ACCOUNT: 'No hay una cuenta de WhatsApp activa configurada.',
+  OUTBOUND_NOT_CONFIGURED: 'La cuenta no tiene token configurado para envíos.',
+  MULTIPLE_ACTIVE_ACCOUNTS: 'Hay más de una cuenta activa. Contactá al soporte.',
+  INVALID_RECIPIENT: 'El número no es válido para recibir mensajes de WhatsApp.',
+  WINDOW_CLOSED: 'La ventana de 24 h expiró. Solo podés responder dentro de la ventana activa.',
+  VALIDATION_ERROR: 'El número o el texto no son válidos. Revisá los campos.',
+  META_API_ERROR: 'Error al comunicarse con Meta. Intentá de nuevo.',
+  NETWORK_ERROR: 'No se pudo conectar con el servidor. Verificá tu conexión.',
+};
 
 const defaultTenantId =
   process.env.NEXT_PUBLIC_DEFAULT_TENANT_ID ?? '00000000-0000-0000-0000-000000000001';
@@ -20,8 +42,14 @@ export default function DevConsolePage() {
   const [profileName, setProfileName] = useState('');
   const [draft, setDraft] = useState('');
 
-  // --- Send state ---
+  // --- Send state (inbound simulator) ---
   const [sendStatus, setSendStatus] = useState<SendStatus>('idle');
+
+  // --- Outbound send state ---
+  const [outboundTo, setOutboundTo] = useState('');
+  const [outboundText, setOutboundText] = useState('');
+  const [outboundSendStatus, setOutboundSendStatus] = useState<OutboundSendStatus>('idle');
+  const [outboundError, setOutboundError] = useState<string | null>(null);
 
   // --- Hub (right panel) state ---
   const [hub, setHub] = useState<MessageDTO[]>([]);
@@ -159,6 +187,31 @@ export default function DevConsolePage() {
     setAutoOn((prev) => !prev);
   };
 
+  // --- Outbound send flow ---
+  const handleOutboundSend = async () => {
+    if (outboundSendStatus !== 'idle') return;
+
+    setOutboundSendStatus('sending');
+    setOutboundError(null);
+
+    try {
+      await sendOutbound(defaultTenantId, outboundTo, outboundText);
+      setOutboundError(null);
+      setOutboundSendStatus('sent');
+      // Trigger poll immediately so the outbound card appears
+      void poll();
+      setTimeout(() => {
+        setOutboundSendStatus('idle');
+      }, 1500);
+    } catch (e) {
+      const code = e instanceof SendOutboundError ? e.code : 'UNKNOWN';
+      setOutboundError(
+        OUTBOUND_ERROR_MESSAGES[code] ?? 'Ocurrió un error inesperado. Intentá de nuevo.',
+      );
+      setOutboundSendStatus('idle');
+    }
+  };
+
   return (
     <div
       data-theme={theme === 'kanagawa' ? 'kanagawa' : undefined}
@@ -213,6 +266,13 @@ export default function DevConsolePage() {
           autoOn={autoOn}
           onAutoToggle={handleAutoToggle}
           onRefresh={() => void poll()}
+          outboundTo={outboundTo}
+          outboundText={outboundText}
+          outboundSendStatus={outboundSendStatus}
+          outboundError={outboundError}
+          onOutboundToChange={setOutboundTo}
+          onOutboundTextChange={setOutboundText}
+          onOutboundSend={() => void handleOutboundSend()}
         />
       </main>
     </div>
