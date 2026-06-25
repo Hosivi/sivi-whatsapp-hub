@@ -28,6 +28,7 @@
  *
  * Always when deps present:
  *   GET    /whatsapp-messages → 200 { data: MessageDTO[] } (tenant middleware)
+ *   POST   /whatsapp-send     → 200 { wamid, status } (tenant middleware)
  *
  * Functional composition — no DI container, no classes, no decorators.
  */
@@ -39,12 +40,15 @@ import { createContactsRoute } from './contacts/contacts.route.js';
 import { createHealthRoute } from './core/health/health.route.js';
 import type { DbClient } from './db/client.js';
 import { createDevRoute } from './dev/webhook-sign.route.js';
+import type { MetaClient } from './meta/meta-client.js';
 import { createWhatsappWebhookRoute } from './webhooks/whatsapp.route.js';
 import { createWhatsappMessagesRoute } from './whatsapp-messages/whatsapp-messages.route.js';
+import { createWhatsappSendRoute } from './whatsapp-send/whatsapp-send.route.js';
 
 export type AppDeps = {
   readonly db: DbClient;
   readonly env: Env;
+  readonly meta: MetaClient; // Injectable Meta Cloud API egress (functional DI)
 };
 
 /**
@@ -90,6 +94,8 @@ export function buildApp(deps?: AppDeps): Hono {
     app.route('/webhooks/whatsapp', createWhatsappWebhookRoute(deps));
     // Always mounted (not dev-gated) — tenant-scoped read of persisted messages.
     app.route('/whatsapp-messages', createWhatsappMessagesRoute(deps));
+    // Outbound send — tenant middleware on POST / (X-Tenant-Id header).
+    app.route('/whatsapp-send', createWhatsappSendRoute(deps));
   }
 
   return app;

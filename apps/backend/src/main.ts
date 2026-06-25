@@ -19,14 +19,16 @@ import pino from 'pino';
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
 import { createDbClient } from './db/client.js';
+import { createMetaClient } from './meta/meta-client.js';
 
 const env = loadEnv();
 
 const logger = pino({ level: env.LOG_LEVEL });
 
 const db = createDbClient(env);
+const meta = createMetaClient(env.WHATSAPP_META_API_VERSION);
 
-const app = buildApp({ db, env });
+const app = buildApp({ db, env, meta });
 
 serve(
   {
