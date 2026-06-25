@@ -171,10 +171,10 @@ the persisted row.
 #### Scenario: successful send → 200 with wamid, outbound row persisted
 
 - GIVEN tenant A has one active account with `phone_number_id = 'pnid_001'` and non-NULL `access_token`
-- AND the Meta client returns `ok({ wamid: 'wamid_out_001', status: 'sent' })`
+- AND the Meta client returns `ok({ wamid: 'wamid_out_001', status: 'accepted' })`
 - WHEN `POST /whatsapp-send` is called with body `{ "to": "+51987654321", "text": "Hola" }`
 - THEN the response status is `200`
-- AND the response body is `{ "wamid": "wamid_out_001", "status": "sent" }`
+- AND the response body is `{ "wamid": "wamid_out_001", "status": "accepted" }`
 - AND exactly one row exists in `whatsapp_messages` with `wamid = 'wamid_out_001'`, `direction = 'outbound'`, `from_phone_e164 = '+51987654321'`
 - AND the persisted row has a non-NULL `contact_id` resolved for the recipient `+51987654321`
 - AND no `WHERE tenant_id` clause was used — RLS via `withTenant` only

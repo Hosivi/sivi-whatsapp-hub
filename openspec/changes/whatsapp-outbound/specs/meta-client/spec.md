@@ -69,7 +69,9 @@ The HTTP request MUST include:
   ```
 
 On a successful Meta response, the implementation MUST parse `messages[0].id`
-from the response body as `wamid` and return `ok({ wamid, status: 'sent' })`.
+from the response body as `wamid` and return `ok({ wamid, status })`, where
+`status` is `messages[0].message_status` if present, otherwise `'accepted'`
+(Meta's send response does not return a `'sent'` status).
 
 The `accessToken` value MUST NOT appear in any log line at any level.
 
@@ -78,7 +80,7 @@ The `accessToken` value MUST NOT appear in any log line at any level.
 - GIVEN a real `MetaClient` constructed with `version = 'v21.0'`
 - AND the Meta API returns HTTP 200 with body `{ "messages": [{ "id": "wamid_real_001" }] }`
 - WHEN `sendText({ phoneNumberId: 'pnid', accessToken: 'tok', to: '+51987654321', text: 'Hola' })` is called
-- THEN the result is `ok({ wamid: 'wamid_real_001', status: 'sent' })`
+- THEN the result is `ok({ wamid: 'wamid_real_001', status: 'accepted' })` (no `message_status` in the body → default `'accepted'`)
 
 #### Scenario: configurable version is used in the URL
 
@@ -144,7 +146,7 @@ interface AND exposes control methods for tests. The fake:
 
 - GIVEN `createFakeMetaClient()` with no error programmed
 - WHEN `sendText({ phoneNumberId: 'pnid', accessToken: 'tok', to: '+51987654321', text: 'Hola' })` is called
-- THEN the result is `ok({ wamid: <non-empty string>, status: 'sent' })`
+- THEN the result is `ok({ wamid: <non-empty string>, status: 'accepted' })`
 - AND no network request is made
 
 #### Scenario: fake returns programmed error
