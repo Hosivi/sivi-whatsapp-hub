@@ -25,6 +25,8 @@ import type { DbClient } from '../db/client.js';
 import { createTenantMiddleware } from '../http/tenant.middleware.js';
 import type { ContactError } from './contacts.errors.js';
 import { importContacts } from './contacts.import.js';
+import type { IntentError } from './contacts.intent.errors.js';
+import { setIntent } from './contacts.intent.js';
 import { createContactsRepository } from './contacts.repository.js';
 import type { ContactRoutingError } from './contacts.routing.errors.js';
 import { routeContact } from './contacts.routing.js';
@@ -97,6 +99,21 @@ function tagsErrorToHttpStatus(error: TagsError): 404 | 422 | 500 {
 }
 
 // ---------------------------------------------------------------------------
+// IntentError → HTTP status (ADR-2: exhaustive over exactly these 3 codes)
+// ---------------------------------------------------------------------------
+
+function intentErrorToHttpStatus(error: IntentError): 404 | 422 | 500 {
+  switch (error.code) {
+    case 'CONTACT_NOT_FOUND':
+      return 404;
+    case 'INVALID_INTENT':
+      return 422;
+    case 'DB_ERROR':
+      return 500;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Zod body schemas
 // ---------------------------------------------------------------------------
 
@@ -119,6 +136,14 @@ const patchBodySchema = z.object({
 
 // tags endpoint — structure only; business rules (empty, length, count) live in the service.
 const tagsBodySchema = z.object({ tags: z.array(z.string()) });
+
+// intent endpoint — structure only; business rules (empty, whitespace, >120, conf-without-intent)
+// live in the service. intentConfidence range (.min(0).max(1)) is kept here because an
+// out-of-range value is a malformed payload (→ 400), not a business-rule violation (→ 422).
+const intentBodySchema = z.object({
+  intent: z.string().nullable(),
+  intentConfidence: z.number().min(0).max(1).nullable().optional(),
+});
 
 // Reuse the per-row schema from createBodySchema — single source of truth.
 // importRowSchema IS createBodySchema; no new fields, no drift between POST / and POST /import.
@@ -214,6 +239,33 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
 
     if (!result.ok) {
       const status = tagsErrorToHttpStatus(result.error);
+      const errorCode = result.error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : result.error.code;
+      return c.json({ error: errorCode }, status);
+    }
+    return c.json(result.value, 200);
+  });
+
+  // PUT /:id/intent — set or clear intent (STATIC sub-path; registered BEFORE /:id wildcard)
+  router.put('/:id/intent', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400);
+    }
+
+    const parsed = intentBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'VALIDATION_ERROR', details: parsed.error.issues }, 400);
+    }
+
+    const id = c.req.param('id');
+    const tenantId = c.get('tenantId');
+    const repo = createContactsRepository(deps.db.withTenant, tenantId);
+    const result = await setIntent(repo, id, parsed.data.intent, parsed.data.intentConfidence);
+
+    if (!result.ok) {
+      const status = intentErrorToHttpStatus(result.error);
       const errorCode = result.error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : result.error.code;
       return c.json({ error: errorCode }, status);
     }
