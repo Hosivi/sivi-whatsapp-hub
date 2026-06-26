@@ -35,6 +35,8 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import type { Logger } from 'pino';
+import type { LlmAdapter } from './ai/llm-adapter.js';
 import type { Env } from './config/env.js';
 import { createContactsRoute } from './contacts/contacts.route.js';
 import { createHealthRoute } from './core/health/health.route.js';
@@ -49,6 +51,10 @@ export type AppDeps = {
   readonly db: DbClient;
   readonly env: Env;
   readonly meta: MetaClient; // Injectable Meta Cloud API egress (functional DI)
+  /** Injectable LLM adapter — real (Anthropic) or fake (tests / ENABLE_DEV_ENDPOINTS). */
+  readonly llm: LlmAdapter;
+  /** Pino logger instance threaded from main.ts so the AI orchestrator can audit. */
+  readonly logger: Logger;
 };
 
 /**
