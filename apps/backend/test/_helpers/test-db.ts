@@ -88,7 +88,14 @@ export type TestDb = {
   /** Insert a contact row for the given tenant directly (bypasses RLS via adminSql). */
   seedTenant(
     tenantId: string,
-    data: { phoneE164: string; fullName?: string | null; routedAt?: Date | null },
+    data: {
+      phoneE164: string;
+      fullName?: string | null;
+      routedAt?: Date | null;
+      tags?: string[];
+      intent?: string | null;
+      intentConfidence?: number | null;
+    },
   ): Promise<void>;
   /** Insert a whatsapp_accounts row directly (bypasses RLS via adminSql). */
   seedWhatsappAccount(data: {
@@ -168,6 +175,14 @@ export async function createTestDb(): Promise<TestDb> {
         phoneE164: data.phoneE164,
         fullName: data.fullName ?? null,
         ...(data.routedAt !== undefined ? { routedAt: data.routedAt } : {}),
+        ...(data.tags !== undefined ? { tags: data.tags } : {}),
+        ...(data.intent !== undefined ? { intent: data.intent } : {}),
+        ...(data.intentConfidence !== undefined
+          ? {
+              intentConfidence:
+                data.intentConfidence === null ? null : String(data.intentConfidence),
+            }
+          : {}),
       });
     },
 
