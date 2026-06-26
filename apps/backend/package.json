@@ -15,6 +15,7 @@
     "seed:dev": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/seed-dev.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.106.0",
     "@hono/node-server": "^2.0.5",
     "@sivihub/contracts": "workspace:*",
     "drizzle-orm": "^0.45.2",
