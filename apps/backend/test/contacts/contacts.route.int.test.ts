@@ -7,7 +7,9 @@
  * Response envelope for GET /contacts: { data: [...] }
  */
 
+import pino from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
@@ -31,6 +33,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
     WHATSAPP_META_API_VERSION: 'v21.0',
+    AI_MODEL: 'claude-haiku-4-5',
     ...overrides,
   };
 }
@@ -41,7 +44,13 @@ describe('POST /contacts', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
-    app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {
@@ -65,7 +74,13 @@ describe('POST /contacts', () => {
   });
 
   it('409 — conflict when phone already exists for tenant', async () => {
-    const app2 = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    const app2 = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
     await app2.request('/contacts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': TENANT_A },
@@ -123,7 +138,13 @@ describe('GET /contacts', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
-    app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {
@@ -182,7 +203,13 @@ describe('GET /contacts/:id', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
-    app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {
@@ -240,7 +267,13 @@ describe('PATCH /contacts/:id', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
-    app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {
@@ -285,7 +318,13 @@ describe('DELETE /contacts/:id', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
-    app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {

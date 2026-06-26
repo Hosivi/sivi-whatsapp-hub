@@ -16,6 +16,7 @@
 
 import { serve } from '@hono/node-server';
 import pino from 'pino';
+import { createAnthropicAdapter, createFakeLlmAdapter } from './ai/llm-adapter.js';
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
 import { createDbClient } from './db/client.js';
@@ -47,7 +48,14 @@ const meta =
       ? createFakeMetaClient()
       : createMetaClient(env.WHATSAPP_META_API_VERSION);
 
-const app = buildApp({ db, env, meta });
+// LLM adapter selection:
+//   dev (ENABLE_DEV_ENDPOINTS) → fake adapter (no Anthropic calls, safe for local dev)
+//   default                    → real Anthropic adapter (requires ANTHROPIC_API_KEY)
+const llm = env.ENABLE_DEV_ENDPOINTS
+  ? createFakeLlmAdapter()
+  : createAnthropicAdapter(env.ANTHROPIC_API_KEY ?? '', env.AI_MODEL);
+
+const app = buildApp({ db, env, meta, llm, logger });
 
 serve(
   {

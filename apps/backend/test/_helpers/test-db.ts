@@ -62,6 +62,7 @@ const MIGRATION_FILES = [
   '0001_routing.sql',
   '0002_whatsapp.sql',
   '0003_outbound.sql',
+  '0004_tenant_ai_config.sql',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -243,7 +244,7 @@ export async function createTestDb(): Promise<TestDb> {
     async truncate() {
       // Truncate all domain tables via admin (superuser) bypasses RLS.
       // Order: whatsapp_messages first (FK → contacts), then whatsapp_accounts, outbox, contacts.
-      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, contacts RESTART IDENTITY CASCADE`;
+      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, tenant_ai_config, contacts RESTART IDENTITY CASCADE`;
     },
 
     async teardown() {

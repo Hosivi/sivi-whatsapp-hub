@@ -68,6 +68,31 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
     WHERE phone_number_id = ${DEV_PHONE_NUMBER_ID}
       AND access_token IS NULL
   `;
+
+  // Insert dev tenant_ai_config row for the tienda_general vertical.
+  // ON CONFLICT DO NOTHING (partial unique index on tenant_id, vertical WHERE deleted_at IS NULL).
+  const devBusinessInfo = {
+    products: [
+      { name: 'Polo básico', price: 35, description: 'Polo de algodón, tallas S-XL' },
+      { name: 'Jean slim', price: 85, description: 'Jean de mezclilla, tallas 28-36' },
+      { name: 'Casaca deportiva', price: 120, description: 'Casaca ligera, colores variados' },
+    ],
+    hours: 'Lunes a Sábado 9am–8pm, Domingo 10am–6pm',
+    location: 'Jr. de la Unión 456, Lima',
+    delivery: 'Delivery disponible en Lima Metropolitana (24–48 h)',
+  };
+  await sql`
+    INSERT INTO tenant_ai_config
+      (tenant_id, vertical, business_name, business_info, enabled, deleted_at)
+    VALUES
+      (${DEV_TENANT_ID}::uuid,
+       'tienda_general',
+       'Tienda Dev (seed)',
+       ${JSON.stringify(devBusinessInfo)}::jsonb,
+       true,
+       NULL)
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 // ---------------------------------------------------------------------------

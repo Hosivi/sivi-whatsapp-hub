@@ -14,7 +14,9 @@
 
 import { contactLeadSchema } from '@sivihub/contracts';
 import { sql as rawSql } from 'drizzle-orm';
+import pino from 'pino';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { routeContact } from '../../src/contacts/contacts.routing.js';
@@ -42,6 +44,7 @@ function makeEnv(overrides?: Partial<Env>): Env {
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
     WHATSAPP_META_API_VERSION: 'v21.0',
+    AI_MODEL: 'claude-haiku-4-5',
     ...overrides,
   };
 }
@@ -55,7 +58,13 @@ let app: ReturnType<typeof buildApp>;
 
 beforeAll(async () => {
   db = await createTestDb();
-  app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
+  app = buildApp({
+    db,
+    env: makeEnv(),
+    meta: createFakeMetaClient(),
+    llm: createFakeLlmAdapter(),
+    logger: pino({ level: 'silent' }),
+  });
 }, 120_000);
 
 afterAll(async () => {

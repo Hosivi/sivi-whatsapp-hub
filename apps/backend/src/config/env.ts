@@ -37,6 +37,12 @@ const envSchema = z.object({
   // Required when WHATSAPP_PROVIDER=dialog360. Sandbox: https://waba-sandbox.360dialog.io/v1
   // Production: https://waba-v2.360dialog.io
   DIALOG360_BASE_URL: z.string().optional(),
+  // Anthropic API key for the real LLM adapter. Optional when ENABLE_DEV_ENDPOINTS=true
+  // (fake LLM adapter is used instead). MUST be set in production.
+  // Explicit string gate — never coerced to boolean.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  // Anthropic model to use for AI replies. Defaults to claude-haiku-4-5.
+  AI_MODEL: z.string().min(1).default('claude-haiku-4-5'),
 });
 
 export type Env = z.infer<typeof envSchema>;
