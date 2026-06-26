@@ -57,7 +57,12 @@ import { err, ok } from '../../src/shared/result.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
-const MIGRATION_FILES = ['0000_contacts.sql', '0001_routing.sql', '0002_whatsapp.sql', '0003_outbound.sql'] as const;
+const MIGRATION_FILES = [
+  '0000_contacts.sql',
+  '0001_routing.sql',
+  '0002_whatsapp.sql',
+  '0003_outbound.sql',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -82,7 +87,14 @@ export type TestDb = {
   /** Insert a contact row for the given tenant directly (bypasses RLS via adminSql). */
   seedTenant(
     tenantId: string,
-    data: { phoneE164: string; fullName?: string | null; routedAt?: Date | null },
+    data: {
+      phoneE164: string;
+      fullName?: string | null;
+      routedAt?: Date | null;
+      tags?: string[];
+      intent?: string | null;
+      intentConfidence?: number | null;
+    },
   ): Promise<void>;
   /** Insert a whatsapp_accounts row directly (bypasses RLS via adminSql). */
   seedWhatsappAccount(data: {
@@ -162,10 +174,24 @@ export async function createTestDb(): Promise<TestDb> {
         phoneE164: data.phoneE164,
         fullName: data.fullName ?? null,
         ...(data.routedAt !== undefined ? { routedAt: data.routedAt } : {}),
+        ...(data.tags !== undefined ? { tags: data.tags } : {}),
+        ...(data.intent !== undefined ? { intent: data.intent } : {}),
+        ...(data.intentConfidence !== undefined
+          ? {
+              intentConfidence:
+                data.intentConfidence === null ? null : String(data.intentConfidence),
+            }
+          : {}),
       });
     },
 
-    async seedWhatsappAccount({ phoneNumberId, tenantId, displayPhoneNumber, wabaId, accessToken }) {
+    async seedWhatsappAccount({
+      phoneNumberId,
+      tenantId,
+      displayPhoneNumber,
+      wabaId,
+      accessToken,
+    }) {
       // Insert directly via admin connection (bypasses RLS).
       await adminDb.insert(whatsappAccountsTable).values({
         tenantId,

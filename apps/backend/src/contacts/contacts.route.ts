@@ -28,6 +28,8 @@ import { importContacts } from './contacts.import.js';
 import { createContactsRepository } from './contacts.repository.js';
 import type { ContactRoutingError } from './contacts.routing.errors.js';
 import { routeContact } from './contacts.routing.js';
+import type { TagsError } from './contacts.tags.errors.js';
+import { removeTag, replaceTags } from './contacts.tags.js';
 
 // ---------------------------------------------------------------------------
 // Deps
@@ -80,6 +82,21 @@ function routingErrorToHttpStatus(error: ContactRoutingError): 404 | 422 | 500 {
 }
 
 // ---------------------------------------------------------------------------
+// TagsError → HTTP status (ADR-2: exhaustive over exactly these 3 codes)
+// ---------------------------------------------------------------------------
+
+function tagsErrorToHttpStatus(error: TagsError): 404 | 422 | 500 {
+  switch (error.code) {
+    case 'CONTACT_NOT_FOUND':
+      return 404;
+    case 'INVALID_TAGS':
+      return 422;
+    case 'DB_ERROR':
+      return 500;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Zod body schemas
 // ---------------------------------------------------------------------------
 
@@ -99,6 +116,9 @@ const patchBodySchema = z.object({
   intent: z.string().nullable().optional(),
   intentConfidence: z.number().min(0).max(1).nullable().optional(),
 });
+
+// tags endpoint — structure only; business rules (empty, length, count) live in the service.
+const tagsBodySchema = z.object({ tags: z.array(z.string()) });
 
 // Reuse the per-row schema from createBodySchema — single source of truth.
 // importRowSchema IS createBodySchema; no new fields, no drift between POST / and POST /import.
@@ -155,6 +175,49 @@ export const createContactsRoute = (deps: ContactRouteDeps) => {
       return c.json(body, status as 404 | 422 | 500);
     }
     return c.json({ routed: result.value }, 200 as const);
+  });
+
+  // PUT /:id/tags — replace full tag set (STATIC sub-path; registered BEFORE /:id wildcard)
+  router.put('/:id/tags', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400);
+    }
+
+    const parsed = tagsBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'VALIDATION_ERROR', details: parsed.error.issues }, 400);
+    }
+
+    const id = c.req.param('id');
+    const tenantId = c.get('tenantId');
+    const repo = createContactsRepository(deps.db.withTenant, tenantId);
+    const result = await replaceTags(repo, id, parsed.data.tags);
+
+    if (!result.ok) {
+      const status = tagsErrorToHttpStatus(result.error);
+      const errorCode = result.error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : result.error.code;
+      return c.json({ error: errorCode }, status);
+    }
+    return c.json(result.value, 200);
+  });
+
+  // DELETE /:id/tags/:tag — remove one tag (STATIC sub-path; registered BEFORE /:id wildcard)
+  router.delete('/:id/tags/:tag', async (c) => {
+    const id = c.req.param('id');
+    const tag = c.req.param('tag');
+    const tenantId = c.get('tenantId');
+    const repo = createContactsRepository(deps.db.withTenant, tenantId);
+    const result = await removeTag(repo, id, tag);
+
+    if (!result.ok) {
+      const status = tagsErrorToHttpStatus(result.error);
+      const errorCode = result.error.code === 'DB_ERROR' ? 'INTERNAL_ERROR' : result.error.code;
+      return c.json({ error: errorCode }, status);
+    }
+    return c.json(result.value, 200);
   });
 
   // POST / — create
