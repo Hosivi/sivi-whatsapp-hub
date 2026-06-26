@@ -19,16 +19,33 @@ import pino from 'pino';
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
 import { createDbClient } from './db/client.js';
+import { createDialog360Client } from './meta/dialog360-client.js';
 import { createFakeMetaClient, createMetaClient } from './meta/meta-client.js';
 
 const env = loadEnv();
 
 const logger = pino({ level: env.LOG_LEVEL });
 
+// Fail fast: 360dialog requires its base URL to be configured.
+if (env.WHATSAPP_PROVIDER === 'dialog360' && !env.DIALOG360_BASE_URL) {
+  throw new Error(
+    '[main] WHATSAPP_PROVIDER=dialog360 requires DIALOG360_BASE_URL to be set. ' +
+      'Sandbox: https://waba-sandbox.360dialog.io/v1 | Production: https://waba-v2.360dialog.io',
+  );
+}
+
 const db = createDbClient(env);
-const meta = env.ENABLE_DEV_ENDPOINTS
-  ? createFakeMetaClient()
-  : createMetaClient(env.WHATSAPP_META_API_VERSION);
+
+// Provider selection:
+//   dialog360 → 360dialog adapter (opt-in via env; works in dev so the sandbox is reachable)
+//   dev       → fake client (no network calls, safe for local dev)
+//   default   → Meta Cloud API
+const meta =
+  env.WHATSAPP_PROVIDER === 'dialog360'
+    ? createDialog360Client(env.DIALOG360_BASE_URL as string)
+    : env.ENABLE_DEV_ENDPOINTS
+      ? createFakeMetaClient()
+      : createMetaClient(env.WHATSAPP_META_API_VERSION);
 
 const app = buildApp({ db, env, meta });
 

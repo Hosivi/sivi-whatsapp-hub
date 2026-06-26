@@ -31,6 +31,12 @@ const envSchema = z.object({
     .transform((v) => v === 'true'),
   // Meta Graph API version for outbound sends (injected to createMetaClient). Default v21.0.
   WHATSAPP_META_API_VERSION: z.string().min(1).default('v21.0'),
+  // Optional: select the WhatsApp egress provider. Defaults to Meta Cloud API.
+  // Explicit string-equality gate — ONLY the literal 'dialog360' selects 360dialog.
+  WHATSAPP_PROVIDER: z.enum(['meta', 'dialog360']).optional(),
+  // Required when WHATSAPP_PROVIDER=dialog360. Sandbox: https://waba-sandbox.360dialog.io/v1
+  // Production: https://waba-v2.360dialog.io
+  DIALOG360_BASE_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
