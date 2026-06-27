@@ -1,19 +1,24 @@
 /**
- * llm-adapter.unit.test.ts — Unit tests for createFakeLlmAdapter (and compilation of createAnthropicAdapter).
+ * llm-adapter.unit.test.ts — Unit tests for createFakeLlmAdapter, createAnthropicAdapter
+ * (type-check only), and createGeminiAdapter (stub-injected, no real API call).
  *
- * Exercises the fake adapter contract:
- * - Default response is ok({ text: 'fake reply', toolUses: [], stopReason: 'end_turn' }).
- * - queueResponse() pre-loads a response that is consumed on the next call.
- * - After the queue is exhausted, calls wrap around to the default.
- * - calls[] records every call in order.
- * - createAnthropicAdapter compiles (TypeScript-level check only — no real API call).
+ * Exercises:
+ * - createFakeLlmAdapter: default response, queueResponse, calls[], script array.
+ * - createAnthropicAdapter: TypeScript compilation only (no real Anthropic call).
+ * - createGeminiAdapter: text response mapping, functionCall mapping, error handling,
+ *   apiKey not leaked into generate params, LlmAdapter type-check.
  *
- * STRICT TDD MODE — written RED before implementation.
+ * STRICT TDD MODE — Gemini adapter tests written RED before implementation.
  */
 
+import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { describe, expect, it } from 'vitest';
 import type { LlmAdapter } from '../../src/ai/llm-adapter.js';
-import { createAnthropicAdapter, createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
+import {
+  createAnthropicAdapter,
+  createFakeLlmAdapter,
+  createGeminiAdapter,
+} from '../../src/ai/llm-adapter.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -86,6 +91,93 @@ describe('createAnthropicAdapter (type-check only)', () => {
   it('(a) createAnthropicAdapter type-checks and returns an LlmAdapter', () => {
     // We only verify TypeScript compilation — no real API call made.
     const adapter: LlmAdapter = createAnthropicAdapter('sk-fake-key', 'claude-haiku-4-5');
+    expect(adapter).toBeDefined();
+    expect(typeof adapter.complete).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createGeminiAdapter — STRICT TDD, RED written before implementation
+// Stubs the generate function so no real Gemini API is called.
+// ---------------------------------------------------------------------------
+
+/** Minimal stub for the Gemini generate function. */
+function makeGeminiStub(candidates: unknown[]) {
+  return async (_params: GenerateContentParameters): Promise<GenerateContentResponse> =>
+    ({ candidates }) as unknown as GenerateContentResponse;
+}
+
+describe('createGeminiAdapter (stub-injected — no real API call)', () => {
+  it('(a) text-only response → ok({ text, toolUses: [], stopReason: "end_turn" })', async () => {
+    const stub = makeGeminiStub([
+      { content: { parts: [{ text: 'Hola desde Gemini' }] }, finishReason: 'STOP' },
+    ]);
+    const adapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash', stub);
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('never');
+    expect(result.value.text).toBe('Hola desde Gemini');
+    expect(result.value.toolUses).toEqual([]);
+    expect(result.value.stopReason).toBe('end_turn');
+  });
+
+  it('(b) functionCall response → ok with ToolUseBlock (name + input mapped)', async () => {
+    const stub = makeGeminiStub([
+      {
+        content: {
+          parts: [
+            { functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: { query: 'hours' } } },
+          ],
+        },
+        finishReason: 'STOP',
+      },
+    ]);
+    const adapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash', stub);
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('never');
+    expect(result.value.text).toBeNull();
+    expect(result.value.toolUses).toHaveLength(1);
+    expect(result.value.toolUses[0]).toEqual({
+      id: 'fc-001',
+      name: 'getBusinessInfo',
+      input: { query: 'hours' },
+    });
+    expect(result.value.stopReason).toBe('tool_use');
+  });
+
+  it('(c) SDK error → err(LlmError) WITHOUT throwing', async () => {
+    const throwingStub = async (
+      _params: GenerateContentParameters,
+    ): Promise<GenerateContentResponse> => {
+      throw new Error('Simulated network timeout');
+    };
+    const adapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash', throwingStub);
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('never');
+    expect(result.error.code).toBe('LLM_NETWORK_ERROR');
+  });
+
+  it('(d) apiKey is never present in the generate call parameters', async () => {
+    const receivedParams: GenerateContentParameters[] = [];
+    const capturingStub = async (
+      params: GenerateContentParameters,
+    ): Promise<GenerateContentResponse> => {
+      receivedParams.push(params);
+      return makeGeminiStub([{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }])(
+        params,
+      );
+    };
+    const adapter = createGeminiAdapter('SUPER_SECRET_KEY', 'gemini-2.5-flash', capturingStub);
+    await adapter.complete(SYS, MSGS, TOOLS);
+    // The apiKey must NEVER appear in the call parameters (it binds to the SDK client, not the params)
+    const paramsJson = JSON.stringify(receivedParams);
+    expect(paramsJson).not.toContain('SUPER_SECRET_KEY');
+  });
+
+  it('(e) createGeminiAdapter type-checks against LlmAdapter interface', () => {
+    const adapter: LlmAdapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash');
     expect(adapter).toBeDefined();
     expect(typeof adapter.complete).toBe('function');
   });
