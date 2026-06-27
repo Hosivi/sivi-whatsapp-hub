@@ -37,12 +37,15 @@ const envSchema = z.object({
   // Required when WHATSAPP_PROVIDER=dialog360. Sandbox: https://waba-sandbox.360dialog.io/v1
   // Production: https://waba-v2.360dialog.io
   DIALOG360_BASE_URL: z.string().optional(),
-  // Anthropic API key for the real LLM adapter. Optional when ENABLE_DEV_ENDPOINTS=true
-  // (fake LLM adapter is used instead). MUST be set in production.
-  // Explicit string gate — never coerced to boolean.
+  // Anthropic API key — retained for the createAnthropicAdapter (not wired as default).
+  // Can still be used if the active adapter is switched to Anthropic.
   ANTHROPIC_API_KEY: z.string().optional(),
-  // Anthropic model to use for AI replies. Defaults to claude-haiku-4-5.
-  AI_MODEL: z.string().min(1).default('claude-haiku-4-5'),
+  // Google Gemini API key for the real LLM adapter (ACTIVE default).
+  // Optional when ENABLE_DEV_ENDPOINTS=true (fake LLM adapter is used instead).
+  // MUST be set in production. Explicit string gate — never coerced to boolean.
+  GEMINI_API_KEY: z.string().optional(),
+  // LLM model to use for AI replies. Defaults to gemini-2.5-flash (Gemini provider).
+  AI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
 });
 
 export type Env = z.infer<typeof envSchema>;
