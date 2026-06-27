@@ -1,4 +1,4 @@
-# Apply Progress: ai-reply — Lote A (data layer — Phases 5 + 6)
+# Apply Progress: ai-reply — Lote B (governed AI core — Phases 7 + 8 + 9 + carried fix)
 
 > Branch: `feat/ai-reply-runtime` | Worktree: `sivi-whatsapp-hub.worktrees/ai-reply-runtime`
 > Updated: 2026-06-27 | Mode: Strict TDD
@@ -85,20 +85,63 @@ All Phase 1–4 tasks confirmed on disk and marked `[x]` in `openspec/changes/ai
 - **postgres.js raw SQL + Date objects**: Passing a JS Date to `rawSql\`...\`` template causes ERR_INVALID_ARG_TYPE. Must either use Drizzle's typed insert (for seeds) or keep all comparisons in SQL (for isWithin24hServiceWindow).
 - **unique index on (tenant_id, vertical) WHERE deleted_at IS NULL**: Can't insert two active rows with same (tenant_id, vertical). MULTIPLE_CONFIGS test seeds two rows with DIFFERENT verticals.
 
+## Lote B (Governed AI Core — Phases 7 + 8 + 9 + Carried Fix) — DONE
+
+### Carried Design Fix
+
+**Problem**: `LlmMessage` tool role had no `toolName` field. Gemini `functionResponse.name` was using `toolUseId` as placeholder — incorrect.
+**Fix**: Added `toolName: string` to tool role; added `assistant-tool-use` variant; updated `mapGeminiMessages` to use `msg.toolName`.
+**Test**: round-trip test (f) in `llm-adapter.unit.test.ts` proves `functionResponse.name === 'getBusinessInfo'` (not 'fc-001').
+
+### Tasks completed
+- [x] Carried fix: `toolName` + `assistant-tool-use` in `llm-types.ts` + `llm-adapter.ts` (commits `4fd4180` + `372aeab`)
+- [x] 7.1 `apps/backend/src/ai/system-prompt.ts` — `buildTiendaGeneralSystemPrompt(config: TenantAiConfig): string`
+  - Returns `systemPromptOverride` verbatim when non-null (D8 — no customer text in system)
+  - Builds tienda_general template with business name + 4 intents from ai-agents.md §5
+- [x] 7.2 `test/ai/system-prompt.unit.test.ts` — 6 unit tests (RED `ea389b6` → GREEN `16d81f0`)
+- [x] 8.1 RED — `test/ai/tool-registry.unit.test.ts` (commit `cf919c4`, 9 governance gate tests)
+  - `vi.mock('../../src/contacts/contacts.repository.js')` intercepts `createContactsRepository`
+- [x] 8.2 GREEN — `apps/backend/src/ai/tool-registry.ts` (commit `853f005`)
+  - `ToolContext`: `{ config, logger, updateContact }` — NO raw DB handle (D5)
+  - `AiTool<I,O>`: `{ name, description, inputSchema: z.ZodType<I>, schema: Record<string,unknown>, run }`
+  - `REGISTRY`: `[getBusinessInfoTool, classifyContactTool]`
+  - `executeTool`: lookup → safeParse → build ctx → run → pino info `ai_tool_invocation` → role:'tool' LlmMessage
+- [x] 8.3 `test/ai/classify-contact.int.test.ts` (commit `9802874`, 3 Testcontainers tests)
+  - Postgres 16-alpine + all 5 migrations; RLS isolation verified; DB write verified via adminQuery
+- [x] 9.1 RED — `test/ai/ai-reply.service.unit.test.ts` (commit `ea4a355`, 9 scenarios a-i)
+  - `makeWindowStub(withinWindow)`: TenantRunner returning `[{within_window: bool}]`
+  - `vi.mock()` for 4 external modules; dynamic import pattern
+- [x] 9.2 GREEN — `apps/backend/src/ai/ai-reply.service.ts` (commit `52ca220`)
+  - Full `runAiReply` with bounded loop (max 5), tool execution, pino audits
+  - `AiReplyInput` / `AiReplyError` / `AiReplyOk` exported
+
+### Green gate: 392/392 tests pass; typecheck clean (tsc --noEmit)
+### Main HEAD: `9d5e826` (unchanged)
+
+### Commits (worktree `feat/ai-reply-runtime`)
+- `4fd4180` — test(ai-reply): add Gemini toolName round-trip test RED
+- `372aeab` — fix(ai-reply): add toolName to LlmMessage tool role + assistant-tool-use variant + fix Gemini functionResponse.name
+- `ea389b6` — test(ai-reply): system-prompt builder unit tests RED
+- `16d81f0` — feat(ai-reply): buildTiendaGeneralSystemPrompt — tienda_general vertical system prompt (GREEN)
+- `cf919c4` — test(ai-reply): tool registry unit tests RED (governance gates)
+- `853f005` — feat(ai-reply): tool registry — getBusinessInfo, classifyContact, executeTool governance gate (GREEN)
+- `9802874` — test(ai-reply): classify-contact integration tests — RLS isolation + DB write verification
+- `ea4a355` — test(ai-reply): runAiReply orchestrator unit tests RED (9 scenarios)
+- `52ca220` — feat(ai-reply): runAiReply orchestrator — governed LLM loop, tool execution, pino audits (GREEN)
+
+### Discoveries
+- No `zod-to-json-schema` available → dual schema pattern: `AiTool` has `inputSchema: z.ZodType<I>` (validation) AND `schema: Record<string,unknown>` (JSON Schema for LLM)
+- `vi.mock()` at module level intercepts `createContactsRepository` cleanly
+- `isWithin24hServiceWindow` cannot be `vi.mocked` (same file as `runAiReply`) → `makeWindowStub` TenantRunner pattern
+
 ## Known Constraints / Risks
 
-1. **`tool` role LlmMessage → Gemini functionResponse**: Gemini requires the function `name` in
-   `functionResponse`, but `LlmMessage` (role='tool') only carries `toolUseId` (not name). The adapter
-   uses `toolUseId` as a placeholder for `name`. The `runAiReply` orchestrator (PR2) MUST track the
-   function name alongside the toolUseId when building multi-turn conversations.
+1. **`@google/genai` version 2.10.0**: SDK uses `parametersJsonSchema` (not `parameters`) — confirmed correct.
+2. **Phase 10-12 NOT YET IMPLEMENTED**: `runAiReply` not yet wired to the webhook route. AI does not fire on inbound messages yet.
+3. **getConversationHistory only returns inbound messages**: Outbound assistant messages not yet included in LLM history.
 
-2. **`@google/genai` version 2.10.0**: API surface verified against installed `dist/genai.d.ts`.
-   SDK uses `parametersJsonSchema` (not `parameters`) for JSON Schema objects — confirmed correct.
+## Remaining Tasks (Lote C = PR2 final)
 
-3. **getConversationHistory only returns inbound messages**: Design intent is inbound-only for Lote A.
-   Lote B (runAiReply) will extend to include outbound (assistant) messages for proper multi-turn context.
-
-## Remaining Tasks (Lote B/C = PR2 continued)
-
-Phases 7–12 (minus 12.1 already done): system-prompt builder, tool registry, runAiReply orchestrator,
-handleInboundMessage extension, webhook trigger, E2E integration test, final typecheck gate.
+- Phase 10: `handleInboundMessage` return shape extension + webhook trigger in `whatsapp.route.ts`
+- Phase 11: E2E integration test (`test/ai/ai-reply.int.test.ts`, Testcontainers)
+- Phase 12.2: `pnpm test` + typecheck final gate
