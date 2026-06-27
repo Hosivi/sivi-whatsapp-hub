@@ -27,7 +27,9 @@
 
 import * as crypto from 'node:crypto';
 import { sql as rawSql } from 'drizzle-orm';
+import pino from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
@@ -155,7 +157,13 @@ describe('POST /whatsapp-send — integration tests', () => {
   beforeAll(async () => {
     db = await createTestDb();
     meta = createFakeMetaClient();
-    app = buildApp({ db, env: makeEnv(), meta });
+    app = buildApp({
+      db,
+      env: makeEnv(),
+      meta,
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {

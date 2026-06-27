@@ -10,7 +10,9 @@
  */
 
 import * as crypto from 'node:crypto';
+import pino from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { whatsappMessagesTable } from '../../src/db/schema/whatsapp-messages.schema.js';
@@ -187,7 +189,13 @@ describe('/webhooks/whatsapp', () => {
 
   beforeAll(async () => {
     testDb = await createTestDb();
-    app = buildApp({ db: testDb, env: makeEnv(), meta: createFakeMetaClient() });
+    app = buildApp({
+      db: testDb,
+      env: makeEnv(),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+    });
   });
 
   beforeEach(async () => {
@@ -515,7 +523,13 @@ describe('/webhooks/whatsapp', () => {
         close: () => Promise.resolve(),
       };
 
-      const brokenApp = buildApp({ db: brokenDb, env: makeEnv(), meta: createFakeMetaClient() });
+      const brokenApp = buildApp({
+        db: brokenDb,
+        env: makeEnv(),
+        meta: createFakeMetaClient(),
+        llm: createFakeLlmAdapter(),
+        logger: pino({ level: 'silent' }),
+      });
       const payload = makeMetaPayload({ wamid: 'db_error_wamid' });
       const res = await postWebhook(brokenApp, payload);
       expect(res.status).toBe(200);
