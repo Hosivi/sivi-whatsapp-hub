@@ -3,6 +3,11 @@
 > Change: ai-reply | Artifact store: hybrid | TDD: Strict (test-first)
 > Delivery strategy: ask-on-risk | Test runner: `pnpm --filter @sivihub/whatsapp-hub-backend test`
 
+> **NOTE (Lote 0 — 2026-06-26):** PR1 (Phases 1–4, Anthropic scaffold) landed via the ai-reply-impl
+> WIP merge; reconciled here. Provider swapped to **Gemini** (`gemini-2.5-flash` via `@google/genai`).
+> `createGeminiAdapter` is now the ACTIVE default. `createAnthropicAdapter` is retained.
+> 345 tests passing on branch `feat/ai-reply-runtime`.
+
 ---
 
 ## Review Workload Forecast
@@ -32,30 +37,30 @@ Chain strategy: pending
 
 ## Phase 1: Dependency install + migration + schema (PR 1)
 
-- [ ] 1.1 `pnpm add @anthropic-ai/sdk` (pinned to latest stable) in `apps/backend/package.json`; verify lockfile updates.
-- [ ] 1.2 Create `apps/backend/drizzle/0004_tenant_ai_config.sql`: full DDL (table + partial unique index) + RLS `tenant_isolation` policy + `GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_ai_config" TO app_rls` + drizzle-kit regeneration warning header (mirror `0002_whatsapp.sql` pattern).
-- [ ] 1.3 Create `apps/backend/src/db/schema/tenant-ai-config.schema.ts`: `tenantAiConfigTable` (`pgTable`) + `TenantAiConfig` domain type + `mapRowToTenantAiConfig` (mirror `whatsapp-accounts.schema.ts` pattern).
-- [ ] 1.4 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/src/db/migrate.ts:39`.
-- [ ] 1.5 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/test/_helpers/test-db.ts:60`; add `tenant_ai_config` to the `TRUNCATE` statement in `truncate()` (before `contacts`).
+- [x] 1.1 `pnpm add @anthropic-ai/sdk` (pinned to latest stable) in `apps/backend/package.json`; verify lockfile updates.
+- [x] 1.2 Create `apps/backend/drizzle/0004_tenant_ai_config.sql`: full DDL (table + partial unique index) + RLS `tenant_isolation` policy + `GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_ai_config" TO app_rls` + drizzle-kit regeneration warning header (mirror `0002_whatsapp.sql` pattern).
+- [x] 1.3 Create `apps/backend/src/db/schema/tenant-ai-config.schema.ts`: `tenantAiConfigTable` (`pgTable`) + `TenantAiConfig` domain type + `mapRowToTenantAiConfig` (mirror `whatsapp-accounts.schema.ts` pattern).
+- [x] 1.4 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/src/db/migrate.ts:39`.
+- [x] 1.5 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/test/_helpers/test-db.ts:60`; add `tenant_ai_config` to the `TRUNCATE` statement in `truncate()` (before `contacts`).
 
 ## Phase 2: Env + dev seed (PR 1, continued)
 
-- [ ] 2.1 Add to `apps/backend/src/config/env.ts`: `ANTHROPIC_API_KEY: z.string().optional()` and `AI_MODEL: z.string().min(1).default('claude-haiku-4-5')` — use explicit string gate, NOT `z.coerce.boolean()`.
-- [ ] 2.2 Update `apps/backend/src/db/seed-dev.ts`: after the `whatsapp_accounts` insert, add `INSERT INTO tenant_ai_config (...) VALUES (...) ON CONFLICT DO NOTHING` for `DEV_TENANT_ID` with `vertical = 'tienda_general'`, `enabled = true`, sample `business_name` and `business_info` JSONB (products + hours). Idempotent.
+- [x] 2.1 Add to `apps/backend/src/config/env.ts`: `GEMINI_API_KEY: z.string().optional()` and `AI_MODEL: z.string().min(1).default('gemini-2.5-flash')` (provider swapped to Gemini; `ANTHROPIC_API_KEY` retained as optional). Use explicit string gate, NOT `z.coerce.boolean()`.
+- [x] 2.2 Update `apps/backend/src/db/seed-dev.ts`: after the `whatsapp_accounts` insert, add `INSERT INTO tenant_ai_config (...) VALUES (...) ON CONFLICT DO NOTHING` for `DEV_TENANT_ID` with `vertical = 'tienda_general'`, `enabled = true`, sample `business_name` and `business_info` JSONB (products + hours). Idempotent.
 
 ## Phase 3: LlmAdapter interface + real + fake (PR 1, TDD)
 
-- [ ] 3.1 **RED** — Write unit test `apps/backend/test/ai/llm-adapter.unit.test.ts`: fake adapter dequeues programmed responses + records calls; default returns `ok({ text: 'fake reply', toolUses: [], stopReason: 'end_turn' })`; queue is exhausted → wraps around to default.
-- [ ] 3.2 Create `apps/backend/src/ai/llm-types.ts`: `LlmMessage`, `LlmTool`, `ToolUseBlock`, `LlmResponse`, `LlmError` (provider-neutral shapes; no Anthropic imports).
-- [ ] 3.3 **GREEN** — Create `apps/backend/src/ai/llm-adapter.ts`: `LlmAdapter` interface (`complete(system, messages, tools): Promise<Result<LlmResponse, LlmError>>`); `createFakeLlmAdapter(script?)` with `calls` recorder + `queueResponse()` — make 3.1 pass.
-- [ ] 3.4 Add `createAnthropicAdapter(apiKey, model): LlmAdapter` to `llm-adapter.ts`: maps Anthropic content blocks → `LlmResponse`; NEVER logs `apiKey`; wraps Anthropic SDK errors into `LlmError` without throwing.
-- [ ] 3.5 **RED** — Extend test 3.1: `createAnthropicAdapter` TypeScript compilation succeeds (type-check only; no real API call in unit tests).
+- [x] 3.1 **RED** — Write unit test `apps/backend/test/ai/llm-adapter.unit.test.ts`: fake adapter dequeues programmed responses + records calls; default returns `ok({ text: 'fake reply', toolUses: [], stopReason: 'end_turn' })`; queue is exhausted → wraps around to default.
+- [x] 3.2 Create `apps/backend/src/ai/llm-types.ts`: `LlmMessage`, `LlmTool`, `ToolUseBlock`, `LlmResponse`, `LlmError` (provider-neutral shapes; no Anthropic imports).
+- [x] 3.3 **GREEN** — Create `apps/backend/src/ai/llm-adapter.ts`: `LlmAdapter` interface (`complete(system, messages, tools): Promise<Result<LlmResponse, LlmError>>`); `createFakeLlmAdapter(script?)` with `calls` recorder + `queueResponse()` — make 3.1 pass.
+- [x] 3.4 **Gemini adapter** — Add `createGeminiAdapter(apiKey, model, _testGenerateFn?): LlmAdapter` to `llm-adapter.ts` using `@google/genai`. Maps: `LlmTool[]` → `functionDeclarations`; `system` + `LlmMessage[]` → `generateContent` request (`systemInstruction` + `Content[]` with `'user'`/`'model'` roles); Gemini response parts → `LlmResponse` (text concat + `functionCall` → `ToolUseBlock` + `stopReason`). NEVER logs `apiKey`. Wraps SDK errors into `LlmError`. `createAnthropicAdapter` retained (not removed).
+- [x] 3.5 **GREEN** — Extended test 3.1 with 5 `createGeminiAdapter` stub-injected tests: text response, functionCall mapping, error → `err(LlmError)`, apiKey not in params, `LlmAdapter` type-check. All 11 tests pass.
 
 ## Phase 4: AppDeps + main.ts wiring (PR 1)
 
-- [ ] 4.1 Add `readonly llm: LlmAdapter` and `readonly logger: pino.Logger` to `AppDeps` in `apps/backend/src/app.ts`; update JSDoc.
-- [ ] 4.2 Update `apps/backend/src/main.ts`: instantiate `llm` with the same `ENABLE_DEV_ENDPOINTS` gate as `meta` (`createFakeLlmAdapter()` vs `createAnthropicAdapter(env.ANTHROPIC_API_KEY ?? '', env.AI_MODEL)`); pass `llm` and `logger` to `buildApp({ db, env, meta, llm, logger })`.
-- [ ] 4.3 Update ALL existing `buildApp(...)` call sites to pass `llm: createFakeLlmAdapter()` and a `logger` stub (e.g. `pino({ level: 'silent' })`). Files:
+- [x] 4.1 Add `readonly llm: LlmAdapter` and `readonly logger: pino.Logger` to `AppDeps` in `apps/backend/src/app.ts`; update JSDoc.
+- [x] 4.2 Update `apps/backend/src/main.ts`: instantiate `llm` with `ENABLE_DEV_ENDPOINTS` gate (`createFakeLlmAdapter()` vs `createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL)`); pass `llm` and `logger` to `buildApp({ db, env, meta, llm, logger })`.
+- [x] 4.3 Update ALL existing `buildApp(...)` call sites to pass `llm: createFakeLlmAdapter()` and a `logger` stub (e.g. `pino({ level: 'silent' })`). Files:
   - `apps/backend/test/dev/webhook-sign.route.int.test.ts` (8 call sites)
   - `apps/backend/test/contacts/contacts.import.int.test.ts` (1 call site)
   - `apps/backend/test/contacts/contacts.route.int.test.ts` (6 call sites)
@@ -66,7 +71,7 @@ Chain strategy: pending
   - `apps/backend/test/webhooks/whatsapp.stub.test.ts` (2 call sites)
   - `apps/backend/test/whatsapp-send/whatsapp-send.route.unit.test.ts` (1 call site)
   - `apps/backend/src/main.ts` — handled by 4.2.
-- [ ] 4.4 **Run** `pnpm --filter @sivihub/whatsapp-hub-backend test` — all pre-existing tests must still pass (PR 1 green gate).
+- [x] 4.4 **GREEN gate** — `pnpm --filter @sivihub/whatsapp-hub-backend test` — 345 tests pass (340 baseline + 5 new Gemini adapter tests).
 
 ---
 
@@ -110,7 +115,7 @@ Chain strategy: pending
 
 ## Phase 12: Docs + env example (PR 2)
 
-- [ ] 12.1 Add `ANTHROPIC_API_KEY` and `AI_MODEL` to `apps/backend/.env.example` (or root `.env.example`) with comments: `ANTHROPIC_API_KEY` marked optional when `ENABLE_DEV_ENDPOINTS=true` (fake LLM used); `AI_MODEL` defaults to `claude-haiku-4-5`.
+- [x] 12.1 Add `GEMINI_API_KEY` and `AI_MODEL=gemini-2.5-flash` to `.env.example` with comments: optional when `ENABLE_DEV_ENDPOINTS=true` (fake LLM used). `ANTHROPIC_API_KEY` retained as commented-out optional.
 - [ ] 12.2 Run `pnpm --filter @sivihub/whatsapp-hub-backend test` — all tests pass; run `pnpm --filter @sivihub/whatsapp-hub-backend typecheck` — no type errors.
 
 ---
