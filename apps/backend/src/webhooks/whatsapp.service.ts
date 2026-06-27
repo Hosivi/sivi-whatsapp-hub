@@ -131,7 +131,18 @@ export const handleInboundMessage = async (
   deps: AppDeps,
   rawBody: ArrayBuffer,
   signatureHeader: string | undefined,
-): Promise<Result<{ wamid: string; contactId: string }, WhatsappWebhookError>> => {
+): Promise<
+  Result<
+    {
+      wamid: string;
+      contactId: string;
+      tenantId: string;
+      fromPhoneE164: string;
+      text: string | null;
+    },
+    WhatsappWebhookError
+  >
+> => {
   // Step 1: HMAC signature verification (raw body, global APP_SECRET)
   const signatureOk = resolveSignature(rawBody, signatureHeader, deps.env.WHATSAPP_APP_SECRET);
   if (!signatureOk) {
@@ -240,7 +251,7 @@ export const handleInboundMessage = async (
       return { wamid: message.id, contactId: contact.id };
     });
 
-    return ok(result);
+    return ok({ ...result, tenantId, fromPhoneE164, text: message.text?.body ?? null });
   } catch (cause) {
     return err({ code: 'DB_ERROR', cause });
   }

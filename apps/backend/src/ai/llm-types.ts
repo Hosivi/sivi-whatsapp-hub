@@ -13,8 +13,24 @@
 export type LlmMessage =
   | { readonly role: 'user'; readonly content: string }
   | { readonly role: 'assistant'; readonly content: string }
-  /** Tool result fed back to the model after the app executes a tool_use block. */
-  | { readonly role: 'tool'; readonly toolUseId: string; readonly content: string };
+  /**
+   * Assistant tool-use turn: the model requested one or more tool calls.
+   * Fed back to the next complete() call so the model sees its own tool requests.
+   * Anthropic maps this to role 'assistant' + content blocks of type 'tool_use'.
+   * Gemini maps this to role 'model' + functionCall parts.
+   */
+  | { readonly role: 'assistant-tool-use'; readonly toolUses: readonly ToolUseBlock[] }
+  /**
+   * Tool result fed back to the model after the app executes a tool_use block.
+   * toolName is required for Gemini's functionResponse.name field.
+   * Anthropic uses only toolUseId (tool_use_id in tool_result block).
+   */
+  | {
+      readonly role: 'tool';
+      readonly toolUseId: string;
+      readonly toolName: string;
+      readonly content: string;
+    };
 
 /** A tool the model MAY invoke — name + JSON-schema params only (no function reference). */
 export type LlmTool = {

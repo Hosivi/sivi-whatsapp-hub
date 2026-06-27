@@ -24,6 +24,7 @@ const DEV_HEADER_ENV: Env = {
   DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost/hub',
   ENABLE_DEV_ENDPOINTS: false,
   WHATSAPP_META_API_VERSION: 'v21.0',
+  AI_MODEL: 'gemini-2.5-flash',
 };
 
 const VALID_UUID = '550e8400-e29b-41d4-a716-446655440000';

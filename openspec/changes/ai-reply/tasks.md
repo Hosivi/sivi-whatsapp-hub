@@ -3,6 +3,11 @@
 > Change: ai-reply | Artifact store: hybrid | TDD: Strict (test-first)
 > Delivery strategy: ask-on-risk | Test runner: `pnpm --filter @sivihub/whatsapp-hub-backend test`
 
+> **NOTE (Lote 0 — 2026-06-26):** PR1 (Phases 1–4, Anthropic scaffold) landed via the ai-reply-impl
+> WIP merge; reconciled here. Provider swapped to **Gemini** (`gemini-2.5-flash` via `@google/genai`).
+> `createGeminiAdapter` is now the ACTIVE default. `createAnthropicAdapter` is retained.
+> 345 tests passing on branch `feat/ai-reply-runtime`.
+
 ---
 
 ## Review Workload Forecast
@@ -32,30 +37,30 @@ Chain strategy: pending
 
 ## Phase 1: Dependency install + migration + schema (PR 1)
 
-- [ ] 1.1 `pnpm add @anthropic-ai/sdk` (pinned to latest stable) in `apps/backend/package.json`; verify lockfile updates.
-- [ ] 1.2 Create `apps/backend/drizzle/0004_tenant_ai_config.sql`: full DDL (table + partial unique index) + RLS `tenant_isolation` policy + `GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_ai_config" TO app_rls` + drizzle-kit regeneration warning header (mirror `0002_whatsapp.sql` pattern).
-- [ ] 1.3 Create `apps/backend/src/db/schema/tenant-ai-config.schema.ts`: `tenantAiConfigTable` (`pgTable`) + `TenantAiConfig` domain type + `mapRowToTenantAiConfig` (mirror `whatsapp-accounts.schema.ts` pattern).
-- [ ] 1.4 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/src/db/migrate.ts:39`.
-- [ ] 1.5 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/test/_helpers/test-db.ts:60`; add `tenant_ai_config` to the `TRUNCATE` statement in `truncate()` (before `contacts`).
+- [x] 1.1 `pnpm add @anthropic-ai/sdk` (pinned to latest stable) in `apps/backend/package.json`; verify lockfile updates.
+- [x] 1.2 Create `apps/backend/drizzle/0004_tenant_ai_config.sql`: full DDL (table + partial unique index) + RLS `tenant_isolation` policy + `GRANT SELECT, INSERT, UPDATE, DELETE ON "tenant_ai_config" TO app_rls` + drizzle-kit regeneration warning header (mirror `0002_whatsapp.sql` pattern).
+- [x] 1.3 Create `apps/backend/src/db/schema/tenant-ai-config.schema.ts`: `tenantAiConfigTable` (`pgTable`) + `TenantAiConfig` domain type + `mapRowToTenantAiConfig` (mirror `whatsapp-accounts.schema.ts` pattern).
+- [x] 1.4 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/src/db/migrate.ts:39`.
+- [x] 1.5 Append `'0004_tenant_ai_config.sql'` to `MIGRATION_FILES` in `apps/backend/test/_helpers/test-db.ts:60`; add `tenant_ai_config` to the `TRUNCATE` statement in `truncate()` (before `contacts`).
 
 ## Phase 2: Env + dev seed (PR 1, continued)
 
-- [ ] 2.1 Add to `apps/backend/src/config/env.ts`: `ANTHROPIC_API_KEY: z.string().optional()` and `AI_MODEL: z.string().min(1).default('claude-haiku-4-5')` — use explicit string gate, NOT `z.coerce.boolean()`.
-- [ ] 2.2 Update `apps/backend/src/db/seed-dev.ts`: after the `whatsapp_accounts` insert, add `INSERT INTO tenant_ai_config (...) VALUES (...) ON CONFLICT DO NOTHING` for `DEV_TENANT_ID` with `vertical = 'tienda_general'`, `enabled = true`, sample `business_name` and `business_info` JSONB (products + hours). Idempotent.
+- [x] 2.1 Add to `apps/backend/src/config/env.ts`: `GEMINI_API_KEY: z.string().optional()` and `AI_MODEL: z.string().min(1).default('gemini-2.5-flash')` (provider swapped to Gemini; `ANTHROPIC_API_KEY` retained as optional). Use explicit string gate, NOT `z.coerce.boolean()`.
+- [x] 2.2 Update `apps/backend/src/db/seed-dev.ts`: after the `whatsapp_accounts` insert, add `INSERT INTO tenant_ai_config (...) VALUES (...) ON CONFLICT DO NOTHING` for `DEV_TENANT_ID` with `vertical = 'tienda_general'`, `enabled = true`, sample `business_name` and `business_info` JSONB (products + hours). Idempotent.
 
 ## Phase 3: LlmAdapter interface + real + fake (PR 1, TDD)
 
-- [ ] 3.1 **RED** — Write unit test `apps/backend/test/ai/llm-adapter.unit.test.ts`: fake adapter dequeues programmed responses + records calls; default returns `ok({ text: 'fake reply', toolUses: [], stopReason: 'end_turn' })`; queue is exhausted → wraps around to default.
-- [ ] 3.2 Create `apps/backend/src/ai/llm-types.ts`: `LlmMessage`, `LlmTool`, `ToolUseBlock`, `LlmResponse`, `LlmError` (provider-neutral shapes; no Anthropic imports).
-- [ ] 3.3 **GREEN** — Create `apps/backend/src/ai/llm-adapter.ts`: `LlmAdapter` interface (`complete(system, messages, tools): Promise<Result<LlmResponse, LlmError>>`); `createFakeLlmAdapter(script?)` with `calls` recorder + `queueResponse()` — make 3.1 pass.
-- [ ] 3.4 Add `createAnthropicAdapter(apiKey, model): LlmAdapter` to `llm-adapter.ts`: maps Anthropic content blocks → `LlmResponse`; NEVER logs `apiKey`; wraps Anthropic SDK errors into `LlmError` without throwing.
-- [ ] 3.5 **RED** — Extend test 3.1: `createAnthropicAdapter` TypeScript compilation succeeds (type-check only; no real API call in unit tests).
+- [x] 3.1 **RED** — Write unit test `apps/backend/test/ai/llm-adapter.unit.test.ts`: fake adapter dequeues programmed responses + records calls; default returns `ok({ text: 'fake reply', toolUses: [], stopReason: 'end_turn' })`; queue is exhausted → wraps around to default.
+- [x] 3.2 Create `apps/backend/src/ai/llm-types.ts`: `LlmMessage`, `LlmTool`, `ToolUseBlock`, `LlmResponse`, `LlmError` (provider-neutral shapes; no Anthropic imports).
+- [x] 3.3 **GREEN** — Create `apps/backend/src/ai/llm-adapter.ts`: `LlmAdapter` interface (`complete(system, messages, tools): Promise<Result<LlmResponse, LlmError>>`); `createFakeLlmAdapter(script?)` with `calls` recorder + `queueResponse()` — make 3.1 pass.
+- [x] 3.4 **Gemini adapter** — Add `createGeminiAdapter(apiKey, model, _testGenerateFn?): LlmAdapter` to `llm-adapter.ts` using `@google/genai`. Maps: `LlmTool[]` → `functionDeclarations`; `system` + `LlmMessage[]` → `generateContent` request (`systemInstruction` + `Content[]` with `'user'`/`'model'` roles); Gemini response parts → `LlmResponse` (text concat + `functionCall` → `ToolUseBlock` + `stopReason`). NEVER logs `apiKey`. Wraps SDK errors into `LlmError`. `createAnthropicAdapter` retained (not removed).
+- [x] 3.5 **GREEN** — Extended test 3.1 with 5 `createGeminiAdapter` stub-injected tests: text response, functionCall mapping, error → `err(LlmError)`, apiKey not in params, `LlmAdapter` type-check. All 11 tests pass.
 
 ## Phase 4: AppDeps + main.ts wiring (PR 1)
 
-- [ ] 4.1 Add `readonly llm: LlmAdapter` and `readonly logger: pino.Logger` to `AppDeps` in `apps/backend/src/app.ts`; update JSDoc.
-- [ ] 4.2 Update `apps/backend/src/main.ts`: instantiate `llm` with the same `ENABLE_DEV_ENDPOINTS` gate as `meta` (`createFakeLlmAdapter()` vs `createAnthropicAdapter(env.ANTHROPIC_API_KEY ?? '', env.AI_MODEL)`); pass `llm` and `logger` to `buildApp({ db, env, meta, llm, logger })`.
-- [ ] 4.3 Update ALL existing `buildApp(...)` call sites to pass `llm: createFakeLlmAdapter()` and a `logger` stub (e.g. `pino({ level: 'silent' })`). Files:
+- [x] 4.1 Add `readonly llm: LlmAdapter` and `readonly logger: pino.Logger` to `AppDeps` in `apps/backend/src/app.ts`; update JSDoc.
+- [x] 4.2 Update `apps/backend/src/main.ts`: instantiate `llm` with `ENABLE_DEV_ENDPOINTS` gate (`createFakeLlmAdapter()` vs `createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL)`); pass `llm` and `logger` to `buildApp({ db, env, meta, llm, logger })`.
+- [x] 4.3 Update ALL existing `buildApp(...)` call sites to pass `llm: createFakeLlmAdapter()` and a `logger` stub (e.g. `pino({ level: 'silent' })`). Files:
   - `apps/backend/test/dev/webhook-sign.route.int.test.ts` (8 call sites)
   - `apps/backend/test/contacts/contacts.import.int.test.ts` (1 call site)
   - `apps/backend/test/contacts/contacts.route.int.test.ts` (6 call sites)
@@ -66,52 +71,52 @@ Chain strategy: pending
   - `apps/backend/test/webhooks/whatsapp.stub.test.ts` (2 call sites)
   - `apps/backend/test/whatsapp-send/whatsapp-send.route.unit.test.ts` (1 call site)
   - `apps/backend/src/main.ts` — handled by 4.2.
-- [ ] 4.4 **Run** `pnpm --filter @sivihub/whatsapp-hub-backend test` — all pre-existing tests must still pass (PR 1 green gate).
+- [x] 4.4 **GREEN gate** — `pnpm --filter @sivihub/whatsapp-hub-backend test` — 345 tests pass (340 baseline + 5 new Gemini adapter tests).
 
 ---
 
 ## Phase 5: Conversation history + 24h window query (PR 2)
 
-- [ ] 5.1 **RED** — Write integration test `apps/backend/test/ai/whatsapp-messages.repo.int.test.ts` using `createTestDb()`: `getConversationHistory` returns inbound-only messages as `LlmMessage[]` in chronological order; capped at `limit`; empty when no inbound messages exist; RLS scopes to tenant.
-- [ ] 5.2 **GREEN** — Add `getConversationHistory(withTenant, tenantId, contactId, limit?)` to `apps/backend/src/whatsapp-messages/whatsapp-messages.repository.ts`: SELECT `text_body`, `direction`, `received_at` WHERE `contact_id = contactId` ORDER BY `received_at` DESC LIMIT `limit`; reverse to chronological; filter `direction = 'inbound'` → role `'user'`; drop null text bodies. No `WHERE tenant_id` — RLS only.
-- [ ] 5.3 **RED** — Add 24h-window integration test to same file: `isWithin24hServiceWindow` returns false when last inbound > 24h; true when ≤ 24h; false when no inbound messages exist (edge case from spec).
-- [ ] 5.4 **GREEN** — Create `apps/backend/src/ai/ai-reply.service.ts` stub (or a separate helper) with `isWithin24hServiceWindow(withTenant, tenantId, contactId): Promise<boolean>`: `MAX(received_at) WHERE direction = 'inbound'` for the contact; compare to `NOW() - INTERVAL '24 hours'` using DB server time.
+- [x] 5.1 **RED** — Write integration test `apps/backend/test/ai/whatsapp-messages.repo.int.test.ts` using `createTestDb()`: `getConversationHistory` returns inbound-only messages as `LlmMessage[]` in chronological order; capped at `limit`; empty when no inbound messages exist; RLS scopes to tenant.
+- [x] 5.2 **GREEN** — Add `getConversationHistory(withTenant, tenantId, contactId, limit?)` to `apps/backend/src/whatsapp-messages/whatsapp-messages.repository.ts`: SELECT `text_body`, `direction`, `received_at` WHERE `contact_id = contactId` ORDER BY `received_at` DESC LIMIT `limit`; reverse to chronological; filter `direction = 'inbound'` → role `'user'`; drop null text bodies. No `WHERE tenant_id` — RLS only.
+- [x] 5.3 **RED** — Add 24h-window integration test to same file: `isWithin24hServiceWindow` returns false when last inbound > 24h; true when ≤ 24h; false when no inbound messages exist (edge case from spec).
+- [x] 5.4 **GREEN** — Create `apps/backend/src/ai/ai-reply.service.ts` stub (or a separate helper) with `isWithin24hServiceWindow(withTenant, tenantId, contactId): Promise<boolean>`: `MAX(received_at) WHERE direction = 'inbound'` for the contact; compare to `NOW() - INTERVAL '24 hours'` using DB server time.
 
 ## Phase 6: tenant-ai-config repository (PR 2, TDD)
 
-- [ ] 6.1 **RED** — Write integration test `apps/backend/test/ai/tenant-ai-config.repo.int.test.ts` using `createTestDb()`: `getTenantAiConfig` returns `ok(null)` when no row; `ok(null)` when `enabled = false`; `ok(null)` when `deleted_at IS NOT NULL`; `ok(row)` when one active enabled row; `err(MULTIPLE_CONFIGS)` when two active rows; RLS tenant isolation (tenant B cannot read tenant A's row).
-- [ ] 6.2 **GREEN** — Create `apps/backend/src/ai/tenant-ai-config.repository.ts`: `getTenantAiConfig(withTenant, tenantId): Promise<Result<TenantAiConfig | null, { code: 'DB_ERROR' | 'MULTIPLE_CONFIGS' }>>`. Uses `withTenant`; no `WHERE tenant_id`; filters `deleted_at IS NULL` and `enabled = true`; returns `err(MULTIPLE_CONFIGS)` on >1 row.
+- [x] 6.1 **RED** — Write integration test `apps/backend/test/ai/tenant-ai-config.repo.int.test.ts` using `createTestDb()`: `getTenantAiConfig` returns `ok(null)` when no row; `ok(null)` when `enabled = false`; `ok(null)` when `deleted_at IS NOT NULL`; `ok(row)` when one active enabled row; `err(MULTIPLE_CONFIGS)` when two active rows; RLS tenant isolation (tenant B cannot read tenant A's row).
+- [x] 6.2 **GREEN** — Create `apps/backend/src/ai/tenant-ai-config.repository.ts`: `getTenantAiConfig(withTenant, tenantId): Promise<Result<TenantAiConfig | null, { code: 'DB_ERROR' | 'MULTIPLE_CONFIGS' }>>`. Uses `withTenant`; no `WHERE tenant_id`; filters `deleted_at IS NULL` and `enabled = true`; returns `err(MULTIPLE_CONFIGS)` on >1 row.
 
 ## Phase 7: System prompt builder (PR 2)
 
-- [ ] 7.1 Create `apps/backend/src/ai/system-prompt.ts`: `buildTiendaGeneralSystemPrompt(config: TenantAiConfig): string` — fills `Docs/specs/ai-agents.md §5` template substituting `business_name`, `vertical`, `tienda_general` intent list; returns `config.systemPromptOverride` verbatim when non-null.
-- [ ] 7.2 **Unit test** `apps/backend/test/ai/system-prompt.unit.test.ts`: generated prompt contains `business_name` and all four intents; `system_prompt_override` replaces generated prompt; customer text never appears in system prompt.
+- [x] 7.1 Create `apps/backend/src/ai/system-prompt.ts`: `buildTiendaGeneralSystemPrompt(config: TenantAiConfig): string` — fills `Docs/specs/ai-agents.md §5` template substituting `business_name`, `vertical`, `tienda_general` intent list; returns `config.systemPromptOverride` verbatim when non-null.
+- [x] 7.2 **Unit test** `apps/backend/test/ai/system-prompt.unit.test.ts`: generated prompt contains `business_name` and all four intents; `system_prompt_override` replaces generated prompt; customer text never appears in system prompt.
 
 ## Phase 8: Tool registry (PR 2, TDD)
 
-- [ ] 8.1 **RED** — Write unit test `apps/backend/test/ai/tool-registry.unit.test.ts`: unknown tool → returns `{ error: 'unknown_tool' }` LlmMessage; Zod-invalid input → returns `{ error: 'invalid_input' }` (execute not called); `getBusinessInfo` with config in ctx → returns `ok({ business_name, business_info })`; `getBusinessInfo` with null config → `err(CONFIG_UNAVAILABLE)`; `classifyContact` valid input calls contacts repo `update` with correct patch; `classifyContact` invalid intent rejected by Zod before execute; pino audit entry emitted per call; no DB handle in tool context.
-- [ ] 8.2 **GREEN** — Create `apps/backend/src/ai/tool-registry.ts`: `AiTool<I, O>` type; `ToolError` union; `getBusinessInfo` (read from pre-loaded config in ctx, no second DB query); `classifyContact` (Zod enum `ver_catalogo | hacer_pedido | consultar_precio | estado_pedido | otro`, writes via contacts repo `update` using `withTenant`); `executeTool(deps, tenantId, block)` (lookup → Zod parse → run → pino audit → return `LlmMessage`).
-- [ ] 8.3 **Integration test** `apps/backend/test/ai/classify-contact.int.test.ts` (Testcontainers): `classifyContact` writes `intent` + `tags` + `intentConfidence` to the contact row; contact of tenant B not visible from tenant A (RLS); contact not found → `err(CONTACT_NOT_FOUND)`.
+- [x] 8.1 **RED** — Write unit test `apps/backend/test/ai/tool-registry.unit.test.ts`: unknown tool → returns `{ error: 'unknown_tool' }` LlmMessage; Zod-invalid input → returns `{ error: 'invalid_input' }` (execute not called); `getBusinessInfo` with config in ctx → returns `ok({ business_name, business_info })`; `getBusinessInfo` with null config → `err(CONFIG_UNAVAILABLE)`; `classifyContact` valid input calls contacts repo `update` with correct patch; `classifyContact` invalid intent rejected by Zod before execute; pino audit entry emitted per call; no DB handle in tool context.
+- [x] 8.2 **GREEN** — Create `apps/backend/src/ai/tool-registry.ts`: `AiTool<I, O>` type; `ToolError` union; `getBusinessInfo` (read from pre-loaded config in ctx, no second DB query); `classifyContact` (Zod enum `ver_catalogo | hacer_pedido | consultar_precio | estado_pedido | otro`, writes via contacts repo `update` using `withTenant`); `executeTool(deps, tenantId, block)` (lookup → Zod parse → run → pino audit → return `LlmMessage`).
+- [x] 8.3 **Integration test** `apps/backend/test/ai/classify-contact.int.test.ts` (Testcontainers): `classifyContact` writes `intent` + `tags` + `intentConfidence` to the contact row; contact of tenant B not visible from tenant A (RLS); contact not found → `err(CONTACT_NOT_FOUND)`.
 
 ## Phase 9: runAiReply orchestrator (PR 2, TDD)
 
-- [ ] 9.1 **RED** — Write unit test `apps/backend/test/ai/ai-reply.service.unit.test.ts` using `createFakeLlmAdapter` + in-memory config + history stubs (no DB): AI disabled (`ok(null)`) → skips, pino info logged; window closed → skips, pino info logged; LLM text on first call → `sendWhatsappText` called once; one tool call then text → tool executed once, reply sent; always-tool-call → max 5 then warn log, no reply; tool returns error → error result fed back to LLM, loop continues; LLM error → `err(LLM_FAILED)`, no reply; send error → `err(SEND_FAILED)`, pino error logged; unexpected exception → caught, pino error, no unhandled rejection.
-- [ ] 9.2 **GREEN** — Complete `apps/backend/src/ai/ai-reply.service.ts`: `AiReplyInput`, `AiReplyError` union, `runAiReply(deps, input): Promise<Result<{ wamid: string; toolCalls: string[] }, AiReplyError>>` following the design flow (steps 1–10 from design.md §D2); all errors `Result`; never throws to caller; pino audit at each gate (`ai_reply_skipped`, `ai_tool_limit_reached`, `ai_reply_sent`, `ai_reply_failed`).
+- [x] 9.1 **RED** — Write unit test `apps/backend/test/ai/ai-reply.service.unit.test.ts` using `createFakeLlmAdapter` + in-memory config + history stubs (no DB): AI disabled (`ok(null)`) → skips, pino info logged; window closed → skips, pino info logged; LLM text on first call → `sendWhatsappText` called once; one tool call then text → tool executed once, reply sent; always-tool-call → max 5 then warn log, no reply; tool returns error → error result fed back to LLM, loop continues; LLM error → `err(LLM_FAILED)`, no reply; send error → `err(SEND_FAILED)`, pino error logged; unexpected exception → caught, pino error, no unhandled rejection.
+- [x] 9.2 **GREEN** — Complete `apps/backend/src/ai/ai-reply.service.ts`: `AiReplyInput`, `AiReplyError` union, `runAiReply(deps, input): Promise<Result<{ wamid: string; toolCalls: string[] }, AiReplyError>>` following the design flow (steps 1–10 from design.md §D2); all errors `Result`; never throws to caller; pino audit at each gate (`ai_reply_skipped`, `ai_tool_limit_reached`, `ai_reply_sent`, `ai_reply_failed`).
 
 ## Phase 10: handleInboundMessage return shape + webhook trigger (PR 2)
 
-- [ ] 10.1 Extend `handleInboundMessage` success value in `apps/backend/src/webhooks/whatsapp.service.ts`: add `tenantId`, `fromPhoneE164`, `text` fields to the returned `ok({ wamid, contactId, tenantId, fromPhoneE164, text })`. Additive — no HTTP contract change.
-- [ ] 10.2 Update `apps/backend/src/webhooks/whatsapp.route.ts`: on the SUCCESS path (after `result.ok`), fire `void runAiReply(deps, { tenantId: result.value.tenantId, contactId: result.value.contactId, fromPhoneE164: result.value.fromPhoneE164, text: result.value.text }).catch((cause) => deps.logger.error({ cause }, '[ai-reply] unhandled rejection'))` BEFORE `return c.text('ok', 200)`. Switch `console.warn` on the error path to `deps.logger.warn`.
-- [ ] 10.3 **Verify** existing webhook integration tests still pass with the extended return shape; update any assertion that destructures the `ok` value to include the new fields if needed.
+- [x] 10.1 Extend `handleInboundMessage` success value in `apps/backend/src/webhooks/whatsapp.service.ts`: add `tenantId`, `fromPhoneE164`, `text` fields to the returned `ok({ wamid, contactId, tenantId, fromPhoneE164, text })`. Additive — no HTTP contract change.
+- [x] 10.2 Update `apps/backend/src/webhooks/whatsapp.route.ts`: on the SUCCESS path (after `result.ok`), fire `void runAiReply(deps, { tenantId: result.value.tenantId, contactId: result.value.contactId, fromPhoneE164: result.value.fromPhoneE164, text: result.value.text }).catch((cause) => deps.logger.error({ cause }, '[ai-reply] unhandled rejection'))` BEFORE `return c.text('ok', 200)`. Switch `console.warn` on the error path to `deps.logger.warn`.
+- [x] 10.3 **Verify** existing webhook integration tests still pass with the extended return shape; update any assertion that destructures the `ok` value to include the new fields if needed.
 
 ## Phase 11: End-to-end integration test (PR 2)
 
-- [ ] 11.1 Write integration test `apps/backend/test/ai/ai-reply.int.test.ts` (Testcontainers): seed `tenant_ai_config` row + contact + recent inbound message; call `runAiReply` with fake LLM scripted to return text; verify `sendWhatsappText` (fake Meta client) was called with correct phone; verify pino `ai_reply_sent` log; AI disabled scenario → no send; 24h window closed scenario → no send.
+- [x] 11.1 Write integration test `apps/backend/test/ai/ai-reply.int.test.ts` (Testcontainers): seed `tenant_ai_config` row + contact + recent inbound message; call `runAiReply` with fake LLM scripted to return text; verify `sendWhatsappText` (fake Meta client) was called with correct phone; verify pino `ai_reply_sent` log; AI disabled scenario → no send; 24h window closed scenario → no send.
 
 ## Phase 12: Docs + env example (PR 2)
 
-- [ ] 12.1 Add `ANTHROPIC_API_KEY` and `AI_MODEL` to `apps/backend/.env.example` (or root `.env.example`) with comments: `ANTHROPIC_API_KEY` marked optional when `ENABLE_DEV_ENDPOINTS=true` (fake LLM used); `AI_MODEL` defaults to `claude-haiku-4-5`.
-- [ ] 12.2 Run `pnpm --filter @sivihub/whatsapp-hub-backend test` — all tests pass; run `pnpm --filter @sivihub/whatsapp-hub-backend typecheck` — no type errors.
+- [x] 12.1 Add `GEMINI_API_KEY` and `AI_MODEL=gemini-2.5-flash` to `.env.example` with comments: optional when `ENABLE_DEV_ENDPOINTS=true` (fake LLM used). `ANTHROPIC_API_KEY` retained as commented-out optional.
+- [x] 12.2 Run `pnpm --filter @sivihub/whatsapp-hub-backend test` — all tests pass; run `pnpm --filter @sivihub/whatsapp-hub-backend typecheck` — no type errors.
 
 ---
 

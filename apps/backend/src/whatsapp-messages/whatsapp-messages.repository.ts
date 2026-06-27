@@ -17,7 +17,8 @@
  * explicit WHERE tenant_id is added.
  */
 
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import type { LlmMessage } from '../ai/llm-types.js';
 import type { TenantRunner } from '../db/client.js';
 import { contactsTable } from '../db/schema/contacts.schema.js';
 import { whatsappMessagesTable } from '../db/schema/whatsapp-messages.schema.js';
@@ -39,6 +40,61 @@ export type MessageDTO = {
   /** 'inbound' | 'outbound' — mirrors the whatsapp_messages.direction column */
   readonly direction: string;
 };
+
+// ---------------------------------------------------------------------------
+// listMessages
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the conversation history for a contact as LlmMessage[].
+ *
+ * Query strategy:
+ * - SELECT only inbound messages (direction = 'inbound') with non-null text_body.
+ * - Order by received_at DESC, LIMIT to the most recent `limit` rows.
+ * - Reverse the slice to chronological order (oldest first) in JS.
+ * - Map direction='inbound' → role 'user'.
+ * - Outbound messages are excluded — the AI will not "remember" its own past replies
+ *   in this slice (runAiReply Lote B will extend this for multi-turn context).
+ *
+ * RLS invariants:
+ * - NO WHERE tenant_id — withTenant sets the GUC; RLS policy enforces isolation.
+ * - NO adminSql — only the TenantRunner is used.
+ *
+ * @param withTenant - TenantRunner from the DbClient
+ * @param tenantId   - UUID of the tenant (used only to set the RLS GUC)
+ * @param contactId  - UUID of the contact whose history to fetch
+ * @param limit      - Maximum number of messages to return (default 10)
+ */
+export async function getConversationHistory(
+  withTenant: TenantRunner,
+  tenantId: string,
+  contactId: string,
+  limit = 10,
+): Promise<LlmMessage[]> {
+  return withTenant(tenantId, async (tx) => {
+    // Fetch the most recent `limit` inbound messages with non-null text (DESC)
+    const rows = await tx
+      .select({
+        textBody: whatsappMessagesTable.textBody,
+        receivedAt: whatsappMessagesTable.receivedAt,
+      })
+      .from(whatsappMessagesTable)
+      .where(
+        and(
+          eq(whatsappMessagesTable.contactId, contactId),
+          eq(whatsappMessagesTable.direction, 'inbound'),
+          isNotNull(whatsappMessagesTable.textBody),
+        ),
+      )
+      .orderBy(desc(whatsappMessagesTable.receivedAt))
+      .limit(limit);
+
+    // Reverse to chronological order (oldest first) and map to LlmMessage
+    return rows
+      .reverse()
+      .map((row): LlmMessage => ({ role: 'user', content: row.textBody as string }));
+  });
+}
 
 // ---------------------------------------------------------------------------
 // listMessages

@@ -17,6 +17,7 @@
  */
 
 import { Hono } from 'hono';
+import { runAiReply } from '../ai/ai-reply.service.js';
 import type { AppDeps } from '../app.js';
 import { handleInboundMessage } from './whatsapp.service.js';
 
@@ -65,12 +66,21 @@ export function createWhatsappWebhookRoute(deps?: AppDeps): Hono {
       const { error } = result;
       if (error.code !== 'NO_MESSAGES') {
         // NO_MESSAGES is expected (status-only events); others warrant a warning
-        console.warn('[whatsapp-webhook] POST error', {
-          code: error.code,
-          cause: 'cause' in error ? error.cause : undefined,
-        });
+        deps.logger.warn(
+          { code: error.code, cause: 'cause' in error ? error.cause : undefined },
+          '[whatsapp-webhook] POST error',
+        );
       }
       return c.text('ok', 200);
+    }
+
+    // Ack-fast: fire AI reply in the background — NEVER await before returning 200.
+    // runAiReply returns Result (never throws); .catch logs any unexpected infrastructure failure.
+    const { tenantId, contactId, fromPhoneE164, text } = result.value;
+    if (text !== null) {
+      void runAiReply(deps, { tenantId, contactId, fromPhoneE164, text }).catch((cause) =>
+        deps.logger.error({ cause }, '[ai-reply] unhandled rejection'),
+      );
     }
 
     return c.text('ok', 200);
