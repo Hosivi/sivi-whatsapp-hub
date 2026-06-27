@@ -15,9 +15,9 @@
  * - RLS isolation: tenant B cannot read tenant A config
  */
 
-import { sql as rawSql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getTenantAiConfig } from '../../src/ai/tenant-ai-config.repository.js';
+import { tenantAiConfigTable } from '../../src/db/schema/tenant-ai-config.schema.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -37,7 +37,8 @@ type AiConfigSeedParams = {
 };
 
 /**
- * Inserts a tenant_ai_config row directly via adminSql (bypasses RLS).
+ * Inserts a tenant_ai_config row directly via adminQuery (bypasses RLS).
+ * Uses Drizzle's typed insert to avoid postgres.js raw-SQL Date serialization issues.
  */
 async function seedAiConfig(db: TestDb, params: AiConfigSeedParams): Promise<void> {
   const {
@@ -49,14 +50,14 @@ async function seedAiConfig(db: TestDb, params: AiConfigSeedParams): Promise<voi
   } = params;
 
   await db.adminQuery(async (tx) => {
-    await tx.execute(
-      rawSql`
-        INSERT INTO tenant_ai_config
-          (tenant_id, vertical, business_name, business_info, enabled, deleted_at)
-        VALUES
-          (${tenantId}::uuid, ${vertical}, ${businessName}, '{}', ${enabled}, ${deletedAt})
-      `,
-    );
+    await tx.insert(tenantAiConfigTable).values({
+      tenantId,
+      vertical,
+      businessName,
+      businessInfo: {},
+      enabled,
+      deletedAt: deletedAt ?? undefined,
+    });
   });
 }
 
@@ -148,8 +149,19 @@ describe('getTenantAiConfig', () => {
   });
 
   it('returns only the active enabled row when one disabled row also exists', async () => {
-    await seedAiConfig(db, { tenantId: TENANT_A, businessName: 'Active', enabled: true });
-    await seedAiConfig(db, { tenantId: TENANT_A, businessName: 'Disabled', enabled: false });
+    // Use different verticals to avoid unique-index violation on (tenant_id, vertical) WHERE deleted_at IS NULL
+    await seedAiConfig(db, {
+      tenantId: TENANT_A,
+      vertical: 'tienda_general',
+      businessName: 'Active',
+      enabled: true,
+    });
+    await seedAiConfig(db, {
+      tenantId: TENANT_A,
+      vertical: 'tienda_premium',
+      businessName: 'Disabled',
+      enabled: false,
+    });
 
     const result = await getTenantAiConfig(db.withTenant, TENANT_A);
     expect(result.ok).toBe(true);
