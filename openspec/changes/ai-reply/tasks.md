@@ -105,18 +105,18 @@ Chain strategy: pending
 
 ## Phase 10: handleInboundMessage return shape + webhook trigger (PR 2)
 
-- [ ] 10.1 Extend `handleInboundMessage` success value in `apps/backend/src/webhooks/whatsapp.service.ts`: add `tenantId`, `fromPhoneE164`, `text` fields to the returned `ok({ wamid, contactId, tenantId, fromPhoneE164, text })`. Additive — no HTTP contract change.
-- [ ] 10.2 Update `apps/backend/src/webhooks/whatsapp.route.ts`: on the SUCCESS path (after `result.ok`), fire `void runAiReply(deps, { tenantId: result.value.tenantId, contactId: result.value.contactId, fromPhoneE164: result.value.fromPhoneE164, text: result.value.text }).catch((cause) => deps.logger.error({ cause }, '[ai-reply] unhandled rejection'))` BEFORE `return c.text('ok', 200)`. Switch `console.warn` on the error path to `deps.logger.warn`.
-- [ ] 10.3 **Verify** existing webhook integration tests still pass with the extended return shape; update any assertion that destructures the `ok` value to include the new fields if needed.
+- [x] 10.1 Extend `handleInboundMessage` success value in `apps/backend/src/webhooks/whatsapp.service.ts`: add `tenantId`, `fromPhoneE164`, `text` fields to the returned `ok({ wamid, contactId, tenantId, fromPhoneE164, text })`. Additive — no HTTP contract change.
+- [x] 10.2 Update `apps/backend/src/webhooks/whatsapp.route.ts`: on the SUCCESS path (after `result.ok`), fire `void runAiReply(deps, { tenantId: result.value.tenantId, contactId: result.value.contactId, fromPhoneE164: result.value.fromPhoneE164, text: result.value.text }).catch((cause) => deps.logger.error({ cause }, '[ai-reply] unhandled rejection'))` BEFORE `return c.text('ok', 200)`. Switch `console.warn` on the error path to `deps.logger.warn`.
+- [x] 10.3 **Verify** existing webhook integration tests still pass with the extended return shape; update any assertion that destructures the `ok` value to include the new fields if needed.
 
 ## Phase 11: End-to-end integration test (PR 2)
 
-- [ ] 11.1 Write integration test `apps/backend/test/ai/ai-reply.int.test.ts` (Testcontainers): seed `tenant_ai_config` row + contact + recent inbound message; call `runAiReply` with fake LLM scripted to return text; verify `sendWhatsappText` (fake Meta client) was called with correct phone; verify pino `ai_reply_sent` log; AI disabled scenario → no send; 24h window closed scenario → no send.
+- [x] 11.1 Write integration test `apps/backend/test/ai/ai-reply.int.test.ts` (Testcontainers): seed `tenant_ai_config` row + contact + recent inbound message; call `runAiReply` with fake LLM scripted to return text; verify `sendWhatsappText` (fake Meta client) was called with correct phone; verify pino `ai_reply_sent` log; AI disabled scenario → no send; 24h window closed scenario → no send.
 
 ## Phase 12: Docs + env example (PR 2)
 
 - [x] 12.1 Add `GEMINI_API_KEY` and `AI_MODEL=gemini-2.5-flash` to `.env.example` with comments: optional when `ENABLE_DEV_ENDPOINTS=true` (fake LLM used). `ANTHROPIC_API_KEY` retained as commented-out optional.
-- [ ] 12.2 Run `pnpm --filter @sivihub/whatsapp-hub-backend test` — all tests pass; run `pnpm --filter @sivihub/whatsapp-hub-backend typecheck` — no type errors.
+- [x] 12.2 Run `pnpm --filter @sivihub/whatsapp-hub-backend test` — all tests pass; run `pnpm --filter @sivihub/whatsapp-hub-backend typecheck` — no type errors.
 
 ---
 
