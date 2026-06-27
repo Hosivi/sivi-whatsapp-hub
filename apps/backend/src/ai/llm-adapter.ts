@@ -98,7 +98,20 @@ function mapMessages(messages: readonly LlmMessage[]): Anthropic.MessageParam[] 
     if (msg.role === 'assistant') {
       return { role: 'assistant', content: msg.content };
     }
-    // tool result: fed back as a 'user' message with tool_result content block
+    if (msg.role === 'assistant-tool-use') {
+      // Anthropic: assistant turn with tool_use content blocks
+      return {
+        role: 'assistant',
+        content: msg.toolUses.map((tu) => ({
+          type: 'tool_use' as const,
+          id: tu.id,
+          name: tu.name,
+          input: tu.input as Record<string, unknown>,
+        })),
+      };
+    }
+    // tool result: fed back as a 'user' message with tool_result content block.
+    // Anthropic only needs tool_use_id — toolName is ignored here.
     return {
       role: 'user',
       content: [
@@ -165,13 +178,12 @@ export const createAnthropicAdapter = (apiKey: string, model: string): LlmAdapte
  * Maps our neutral LlmMessage[] to Gemini Content[].
  *
  * Roles:
- * - 'user'      → Gemini 'user' role with text part
- * - 'assistant' → Gemini 'model' role with text part
- * - 'tool'      → Gemini 'user' role with functionResponse part
- *   NOTE: Gemini requires the function name in functionResponse. Since LlmMessage
- *   only carries toolUseId (no name), we use toolUseId as placeholder for name.
- *   The runAiReply orchestrator (PR2) must track function names alongside toolUseIds
- *   when building multi-turn conversations for Gemini.
+ * - 'user'               → Gemini 'user' role with text part
+ * - 'assistant'          → Gemini 'model' role with text part
+ * - 'assistant-tool-use' → Gemini 'model' role with functionCall parts
+ * - 'tool'               → Gemini 'user' role with functionResponse part.
+ *   Uses msg.toolName (the real function name) as functionResponse.name —
+ *   Gemini requires the function name for correct tool round-trips.
  */
 function mapGeminiMessages(messages: readonly LlmMessage[]): Content[] {
   return messages.map((msg): Content => {
@@ -181,7 +193,21 @@ function mapGeminiMessages(messages: readonly LlmMessage[]): Content[] {
     if (msg.role === 'assistant') {
       return { role: 'model', parts: [{ text: msg.content }] };
     }
-    // tool role: function response fed back as a user turn
+    if (msg.role === 'assistant-tool-use') {
+      // Gemini: model turn with functionCall parts
+      return {
+        role: 'model',
+        parts: msg.toolUses.map((tu) => ({
+          functionCall: {
+            id: tu.id,
+            name: tu.name,
+            args: tu.input as Record<string, unknown>,
+          },
+        })),
+      } as Content;
+    }
+    // tool role: function response fed back as a user turn.
+    // msg.toolName carries the REAL function name — required by Gemini.
     let responsePayload: Record<string, unknown>;
     try {
       responsePayload = JSON.parse(msg.content) as Record<string, unknown>;
@@ -194,7 +220,7 @@ function mapGeminiMessages(messages: readonly LlmMessage[]): Content[] {
         {
           functionResponse: {
             id: msg.toolUseId,
-            name: msg.toolUseId, // placeholder — PR2 must supply real function name
+            name: msg.toolName, // real function name — previously used toolUseId as placeholder
             response: responsePayload,
           },
         },
