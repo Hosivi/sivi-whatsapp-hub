@@ -11,7 +11,7 @@
  * STRICT TDD MODE — Gemini adapter tests written RED before implementation.
  */
 
-import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
+import type { Content, GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { describe, expect, it } from 'vitest';
 import type { LlmAdapter } from '../../src/ai/llm-adapter.js';
 import {
@@ -19,6 +19,7 @@ import {
   createFakeLlmAdapter,
   createGeminiAdapter,
 } from '../../src/ai/llm-adapter.js';
+import type { LlmMessage } from '../../src/ai/llm-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -180,5 +181,41 @@ describe('createGeminiAdapter (stub-injected — no real API call)', () => {
     const adapter: LlmAdapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash');
     expect(adapter).toBeDefined();
     expect(typeof adapter.complete).toBe('function');
+  });
+
+  it('(f) tool message sends toolName (not toolUseId) as Gemini functionResponse.name', async () => {
+    // RED: fails until LlmMessage tool role includes toolName and mapGeminiMessages uses it.
+    const receivedParams: GenerateContentParameters[] = [];
+    const capturingStub = async (
+      params: GenerateContentParameters,
+    ): Promise<GenerateContentResponse> => {
+      receivedParams.push(params);
+      return makeGeminiStub([{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }])(
+        params,
+      );
+    };
+
+    const adapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash', capturingStub);
+
+    // A tool result message — toolUseId and toolName are DIFFERENT values.
+    const toolMsg: LlmMessage = {
+      role: 'tool',
+      toolUseId: 'fc-001',
+      toolName: 'getBusinessInfo',
+      content: JSON.stringify({ business_name: 'Test Store' }),
+    };
+
+    await adapter.complete(SYS, [toolMsg], TOOLS);
+
+    const params = receivedParams[0]!;
+    const contents = params.contents as Content[];
+    const toolContent = contents.find(
+      (c) => Array.isArray(c.parts) && c.parts.some((p) => p.functionResponse !== undefined),
+    );
+    expect(toolContent).toBeDefined();
+    const funcResponse = toolContent!.parts![0]!.functionResponse!;
+    // Must use toolName ('getBusinessInfo'), NOT toolUseId ('fc-001')
+    expect(funcResponse.name).toBe('getBusinessInfo');
+    expect(funcResponse.id).toBe('fc-001');
   });
 });
