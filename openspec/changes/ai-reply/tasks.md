@@ -77,15 +77,15 @@ Chain strategy: pending
 
 ## Phase 5: Conversation history + 24h window query (PR 2)
 
-- [ ] 5.1 **RED** — Write integration test `apps/backend/test/ai/whatsapp-messages.repo.int.test.ts` using `createTestDb()`: `getConversationHistory` returns inbound-only messages as `LlmMessage[]` in chronological order; capped at `limit`; empty when no inbound messages exist; RLS scopes to tenant.
-- [ ] 5.2 **GREEN** — Add `getConversationHistory(withTenant, tenantId, contactId, limit?)` to `apps/backend/src/whatsapp-messages/whatsapp-messages.repository.ts`: SELECT `text_body`, `direction`, `received_at` WHERE `contact_id = contactId` ORDER BY `received_at` DESC LIMIT `limit`; reverse to chronological; filter `direction = 'inbound'` → role `'user'`; drop null text bodies. No `WHERE tenant_id` — RLS only.
-- [ ] 5.3 **RED** — Add 24h-window integration test to same file: `isWithin24hServiceWindow` returns false when last inbound > 24h; true when ≤ 24h; false when no inbound messages exist (edge case from spec).
-- [ ] 5.4 **GREEN** — Create `apps/backend/src/ai/ai-reply.service.ts` stub (or a separate helper) with `isWithin24hServiceWindow(withTenant, tenantId, contactId): Promise<boolean>`: `MAX(received_at) WHERE direction = 'inbound'` for the contact; compare to `NOW() - INTERVAL '24 hours'` using DB server time.
+- [x] 5.1 **RED** — Write integration test `apps/backend/test/ai/whatsapp-messages.repo.int.test.ts` using `createTestDb()`: `getConversationHistory` returns inbound-only messages as `LlmMessage[]` in chronological order; capped at `limit`; empty when no inbound messages exist; RLS scopes to tenant.
+- [x] 5.2 **GREEN** — Add `getConversationHistory(withTenant, tenantId, contactId, limit?)` to `apps/backend/src/whatsapp-messages/whatsapp-messages.repository.ts`: SELECT `text_body`, `direction`, `received_at` WHERE `contact_id = contactId` ORDER BY `received_at` DESC LIMIT `limit`; reverse to chronological; filter `direction = 'inbound'` → role `'user'`; drop null text bodies. No `WHERE tenant_id` — RLS only.
+- [x] 5.3 **RED** — Add 24h-window integration test to same file: `isWithin24hServiceWindow` returns false when last inbound > 24h; true when ≤ 24h; false when no inbound messages exist (edge case from spec).
+- [x] 5.4 **GREEN** — Create `apps/backend/src/ai/ai-reply.service.ts` stub (or a separate helper) with `isWithin24hServiceWindow(withTenant, tenantId, contactId): Promise<boolean>`: `MAX(received_at) WHERE direction = 'inbound'` for the contact; compare to `NOW() - INTERVAL '24 hours'` using DB server time.
 
 ## Phase 6: tenant-ai-config repository (PR 2, TDD)
 
-- [ ] 6.1 **RED** — Write integration test `apps/backend/test/ai/tenant-ai-config.repo.int.test.ts` using `createTestDb()`: `getTenantAiConfig` returns `ok(null)` when no row; `ok(null)` when `enabled = false`; `ok(null)` when `deleted_at IS NOT NULL`; `ok(row)` when one active enabled row; `err(MULTIPLE_CONFIGS)` when two active rows; RLS tenant isolation (tenant B cannot read tenant A's row).
-- [ ] 6.2 **GREEN** — Create `apps/backend/src/ai/tenant-ai-config.repository.ts`: `getTenantAiConfig(withTenant, tenantId): Promise<Result<TenantAiConfig | null, { code: 'DB_ERROR' | 'MULTIPLE_CONFIGS' }>>`. Uses `withTenant`; no `WHERE tenant_id`; filters `deleted_at IS NULL` and `enabled = true`; returns `err(MULTIPLE_CONFIGS)` on >1 row.
+- [x] 6.1 **RED** — Write integration test `apps/backend/test/ai/tenant-ai-config.repo.int.test.ts` using `createTestDb()`: `getTenantAiConfig` returns `ok(null)` when no row; `ok(null)` when `enabled = false`; `ok(null)` when `deleted_at IS NOT NULL`; `ok(row)` when one active enabled row; `err(MULTIPLE_CONFIGS)` when two active rows; RLS tenant isolation (tenant B cannot read tenant A's row).
+- [x] 6.2 **GREEN** — Create `apps/backend/src/ai/tenant-ai-config.repository.ts`: `getTenantAiConfig(withTenant, tenantId): Promise<Result<TenantAiConfig | null, { code: 'DB_ERROR' | 'MULTIPLE_CONFIGS' }>>`. Uses `withTenant`; no `WHERE tenant_id`; filters `deleted_at IS NULL` and `enabled = true`; returns `err(MULTIPLE_CONFIGS)` on >1 row.
 
 ## Phase 7: System prompt builder (PR 2)
 

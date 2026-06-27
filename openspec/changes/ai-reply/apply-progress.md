@@ -1,7 +1,7 @@
-# Apply Progress: ai-reply — Lote 0 (Gemini provider swap)
+# Apply Progress: ai-reply — Lote A (data layer — Phases 5 + 6)
 
 > Branch: `feat/ai-reply-runtime` | Worktree: `sivi-whatsapp-hub.worktrees/ai-reply-runtime`
-> Completed: 2026-06-26 | Mode: Strict TDD
+> Updated: 2026-06-27 | Mode: Strict TDD
 
 ## TDD Cycle Evidence
 
@@ -11,6 +11,8 @@
 | 2.1 env GEMINI_API_KEY | — (structural, no test) | `6c729c3` | — | AI_MODEL default → gemini-2.5-flash |
 | 4.2 main.ts Gemini wire | — (structural, no test) | `6c729c3` | — | createGeminiAdapter replaces Anthropic default |
 | 12.1 .env.example | — (docs, no test) | `6c729c3` | — | GEMINI_API_KEY + AI_MODEL documented |
+| 5.1–5.4 conversation history + 24h window | `313d35f` — import error | `864b653` — 11/11 pass | Biome auto-fix | getConversationHistory + isWithin24hServiceWindow |
+| 6.1–6.2 tenant-ai-config repo | `a7281fc` — import error | `4da0ce8` — 7/7 pass | Biome auto-fix | getTenantAiConfig + RLS isolation |
 
 ## PR1 Reconciled
 
@@ -50,6 +52,39 @@ All Phase 1–4 tasks confirmed on disk and marked `[x]` in `openspec/changes/ai
 ### Main repo commits
 - `270901d` — chore(ai-reply): reconcile PR1 tasks and update Gemini provider in tasks.md
 
+## Lote A (Data Layer — Phases 5 + 6) — DONE
+
+### Tasks completed
+- [x] 5.1 RED — `test/ai/whatsapp-messages.repo.int.test.ts` — 7 `getConversationHistory` tests + 4 `isWithin24hServiceWindow` tests
+- [x] 5.2 GREEN — `getConversationHistory(withTenant, tenantId, contactId, limit?)` added to `whatsapp-messages.repository.ts`
+  - SELECT text_body WHERE contact_id AND direction='inbound' AND text_body IS NOT NULL
+  - ORDER BY received_at DESC LIMIT, then `.reverse()` to chronological
+  - Maps to `LlmMessage[]` with role='user'; outbound dropped
+  - No WHERE tenant_id — RLS only via withTenant
+- [x] 5.3 RED — 24h window tests added to same test file
+- [x] 5.4 GREEN — `isWithin24hServiceWindow(withTenant, tenantId, contactId)` created in `ai-reply.service.ts`
+  - Single SQL query: `MAX(received_at) > NOW() - INTERVAL '24 hours'` with COALESCE(…, false)
+  - Uses DB server time (NOW()) — avoids Node.js clock skew
+  - Returns false when no inbound messages exist
+- [x] 6.1 RED — `test/ai/tenant-ai-config.repo.int.test.ts` — 7 tests (null cases, enabled row, MULTIPLE_CONFIGS, RLS isolation)
+- [x] 6.2 GREEN — `getTenantAiConfig(withTenant, tenantId)` created in `tenant-ai-config.repository.ts`
+  - Filters: `deleted_at IS NULL AND enabled = true`
+  - 0 rows → `ok(null)`; 1 row → `ok(row)`; >1 row → `err(MULTIPLE_CONFIGS)`
+  - DB errors caught → `err(DB_ERROR, cause)`
+  - No WHERE tenant_id — RLS only via withTenant
+
+### Green gate: 363/363 tests pass; typecheck clean
+
+### Commits (worktree `feat/ai-reply-runtime`)
+- `313d35f` — test(ai-reply): getConversationHistory + isWithin24hServiceWindow RED
+- `864b653` — feat(ai-reply): getConversationHistory + isWithin24hServiceWindow GREEN
+- `a7281fc` — test(ai-reply): tenant-ai-config repository RED
+- `4da0ce8` — feat(ai-reply): tenant-ai-config repository GREEN
+
+### Discoveries
+- **postgres.js raw SQL + Date objects**: Passing a JS Date to `rawSql\`...\`` template causes ERR_INVALID_ARG_TYPE. Must either use Drizzle's typed insert (for seeds) or keep all comparisons in SQL (for isWithin24hServiceWindow).
+- **unique index on (tenant_id, vertical) WHERE deleted_at IS NULL**: Can't insert two active rows with same (tenant_id, vertical). MULTIPLE_CONFIGS test seeds two rows with DIFFERENT verticals.
+
 ## Known Constraints / Risks
 
 1. **`tool` role LlmMessage → Gemini functionResponse**: Gemini requires the function `name` in
@@ -60,8 +95,10 @@ All Phase 1–4 tasks confirmed on disk and marked `[x]` in `openspec/changes/ai
 2. **`@google/genai` version 2.10.0**: API surface verified against installed `dist/genai.d.ts`.
    SDK uses `parametersJsonSchema` (not `parameters`) for JSON Schema objects — confirmed correct.
 
-## Remaining Tasks (Lote A/B/C = PR2)
+3. **getConversationHistory only returns inbound messages**: Design intent is inbound-only for Lote A.
+   Lote B (runAiReply) will extend to include outbound (assistant) messages for proper multi-turn context.
 
-Phases 5–12 (minus 12.1 already done): conversation history, tenant-ai-config repo,
-system-prompt builder, tool registry, runAiReply orchestrator, webhook trigger, E2E test,
-final typecheck gate.
+## Remaining Tasks (Lote B/C = PR2 continued)
+
+Phases 7–12 (minus 12.1 already done): system-prompt builder, tool registry, runAiReply orchestrator,
+handleInboundMessage extension, webhook trigger, E2E integration test, final typecheck gate.
