@@ -21,6 +21,7 @@
     "@sivihub/contracts": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.26",
+    "mitt": "^3.0.1",
     "pino": "^10.3.1",
     "postgres": "^3.4.9",
     "zod": "^3.25.76"
