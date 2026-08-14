@@ -1,0 +1,1227 @@
+# Specification — contacts
+
+> Domain: contacts · Project: sivi-whatsapp-hub
+> This is the main contacts domain specification, built from contact-phone-e164-dedupe (2026-06-22).
+
+## Purpose
+
+Establish the canonical domain types and behaviors for the WhatsApp Hub's contact management system. This slice introduces the Result<T,E> primitive (used project-wide) and E.164 phone normalization + deduplication detection for Peru mobiles.
+
+---
+
+## Requirements
+
+### Requirement: Result Type and Helpers
+
+The system MUST expose a `Result<T, E>` discriminated union at `apps/backend/src/shared/result.ts` with the following shape and helpers. This shape is the project-wide canonical form; no alternative Result type is permitted.
+
+- `Ok<T>` = `{ readonly ok: true; readonly value: T }`
+- `Err<E>` = `{ readonly ok: false; readonly error: E }`
+- `Result<T, E>` = `Ok<T> | Err<E>`
+- `ok<T>(value: T): Ok<T>` — constructs a success variant
+- `err<E>(error: E): Err<E>` — constructs a failure variant
+- `isOk<T, E>(r: Result<T, E>): r is Ok<T>` — narrows to `Ok<T>`
+- `isErr<T, E>(r: Result<T, E>): r is Err<E>` — narrows to `Err<E>`
+
+All fields MUST be `readonly`. Helpers MUST be exported named exports.
+
+#### Scenario: ok helper produces a success variant
+
+- GIVEN a value `42`
+- WHEN `ok(42)` is called
+- THEN the result is `{ ok: true, value: 42 }`
+- AND `result.ok` is `true`
+- AND `result.value` is `42`
+
+#### Scenario: err helper produces a failure variant
+
+- GIVEN an error object `{ code: 'INVALID_FORMAT', input: 'bad' }`
+- WHEN `err({ code: 'INVALID_FORMAT', input: 'bad' })` is called
+- THEN the result is `{ ok: false, error: { code: 'INVALID_FORMAT', input: 'bad' } }`
+- AND `result.ok` is `false`
+
+#### Scenario: isOk narrows correctly on a success result
+
+- GIVEN `const r = ok('hello')`
+- WHEN `isOk(r)` is called
+- THEN it returns `true`
+
+#### Scenario: isOk returns false on a failure result
+
+- GIVEN `const r = err({ code: 'EMPTY_INPUT', input: '' })`
+- WHEN `isOk(r)` is called
+- THEN it returns `false`
+
+#### Scenario: isErr narrows correctly on a failure result
+
+- GIVEN `const r = err({ code: 'EMPTY_INPUT', input: '' })`
+- WHEN `isErr(r)` is called
+- THEN it returns `true`
+
+#### Scenario: isErr returns false on a success result
+
+- GIVEN `const r = ok('+51987654321')`
+- WHEN `isErr(r)` is called
+- THEN it returns `false`
+
+---
+
+### Requirement: PhoneNormalizationError Type
+
+The system MUST define `PhoneNormalizationError` as:
+
+```
+{ readonly code: 'EMPTY_INPUT' | 'INVALID_FORMAT'; readonly input: string }
+```
+
+`input` MUST carry the original raw string passed by the caller (not a trimmed or stripped version). No other error codes are permitted in this slice.
+
+---
+
+### Requirement: normalizePhoneE164 — Valid Inputs
+
+`normalizePhoneE164(input: string): Result<string, PhoneNormalizationError>` MUST return `Ok<string>` carrying the canonical `+51XXXXXXXXX` form for all of the following input shapes. The X digits are the 9-digit mobile number starting with `9`.
+
+#### Scenario: already E.164
+
+- GIVEN input `"+51987654321"`
+- WHEN `normalizePhoneE164("+51987654321")` is called
+- THEN the result is `ok('+51987654321')`
+- AND `result.ok` is `true` and `result.value` is `"+51987654321"`
+
+#### Scenario: country prefix without plus sign
+
+- GIVEN input `"51987654321"`
+- WHEN `normalizePhoneE164("51987654321")` is called
+- THEN the result is `ok('+51987654321')`
+
+#### Scenario: bare 9-digit local mobile
+
+- GIVEN input `"987654321"`
+- WHEN `normalizePhoneE164("987654321")` is called
+- THEN the result is `ok('+51987654321')`
+
+#### Scenario: E.164 with spaces
+
+- GIVEN input `"+51 987 654 321"`
+- WHEN `normalizePhoneE164("+51 987 654 321")` is called
+- THEN the result is `ok('+51987654321')`
+
+#### Scenario: formatted with parentheses and hyphens
+
+- GIVEN input `"(+51) 987-654-321"`
+- WHEN `normalizePhoneE164("(+51) 987-654-321")` is called
+- THEN the result is `ok('+51987654321')`
+
+---
+
+### Requirement: normalizePhoneE164 — Invalid Inputs
+
+`normalizePhoneE164` MUST return `Err<PhoneNormalizationError>` for any input that is not a valid Peru mobile. The `error.input` MUST equal the original raw string passed in.
+
+#### Scenario: empty string → EMPTY_INPUT
+
+- GIVEN input `""`
+- WHEN `normalizePhoneE164("")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"EMPTY_INPUT"`
+- AND `result.error.input` is `""`
+
+#### Scenario: whitespace-only string → EMPTY_INPUT
+
+- GIVEN input `"   "`
+- WHEN `normalizePhoneE164("   ")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"EMPTY_INPUT"`
+- AND `result.error.input` is `"   "`
+
+#### Scenario: too-short digit string → INVALID_FORMAT
+
+- GIVEN input `"12345"`
+- WHEN `normalizePhoneE164("12345")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_FORMAT"`
+- AND `result.error.input` is `"12345"`
+
+#### Scenario: 8-digit local number (not a mobile, first digit not 9) → INVALID_FORMAT
+
+- GIVEN input `"12345678"`
+- WHEN `normalizePhoneE164("12345678")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_FORMAT"`
+
+#### Scenario: Lima landline format → INVALID_FORMAT
+
+- GIVEN input `"014561234"` (9 digits but first digit is not 9)
+- WHEN `normalizePhoneE164("014561234")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_FORMAT"`
+- AND `result.error.input` is `"014561234"`
+
+#### Scenario: alphabetic / garbage input → INVALID_FORMAT
+
+- GIVEN input `"abcdef"`
+- WHEN `normalizePhoneE164("abcdef")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_FORMAT"`
+- AND `result.error.input` is `"abcdef"`
+
+#### Scenario: 10 local digits (one digit too many) → INVALID_FORMAT
+
+- GIVEN input `"9876543210"` (10 digits, no country prefix)
+- WHEN `normalizePhoneE164("9876543210")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_FORMAT"`
+- AND `result.error.input` is `"9876543210"`
+
+---
+
+### Requirement: normalizePhoneBatch
+
+`normalizePhoneBatch(inputs: ReadonlyArray<string>): NormalizationReport` MUST:
+- Process every element in `inputs` (MUST NOT silently drop any element).
+- Partition results into `valid` (normalized) and `invalid` (with error).
+- Preserve the original `input` string in both buckets.
+- Preserve order within each bucket (same relative order as in `inputs`).
+- Return `{ valid: ReadonlyArray<NormalizedEntry>; invalid: ReadonlyArray<InvalidEntry> }`.
+
+#### Scenario: mixed batch of valid and invalid inputs
+
+- GIVEN inputs `["+51987654321", "abcdef", "987654321", ""]`
+- WHEN `normalizePhoneBatch(["+51987654321", "abcdef", "987654321", ""])` is called
+- THEN `report.valid` has 2 entries:
+  - `{ input: "+51987654321", phoneE164: "+51987654321" }`
+  - `{ input: "987654321", phoneE164: "+51987654321" }`
+- AND `report.invalid` has 2 entries:
+  - `{ input: "abcdef", error: { code: "INVALID_FORMAT", input: "abcdef" } }`
+  - `{ input: "", error: { code: "EMPTY_INPUT", input: "" } }`
+
+#### Scenario: empty array
+
+- GIVEN inputs `[]`
+- WHEN `normalizePhoneBatch([])` is called
+- THEN `report.valid` is `[]`
+- AND `report.invalid` is `[]`
+
+#### Scenario: all valid batch
+
+- GIVEN inputs `["+51987654321", "51987654321", "987654321"]`
+- WHEN `normalizePhoneBatch(...)` is called
+- THEN `report.valid` has 3 entries, all with `phoneE164: "+51987654321"`
+- AND `report.invalid` is `[]`
+
+#### Scenario: all invalid batch
+
+- GIVEN inputs `["", "abc", "12345"]`
+- WHEN `normalizePhoneBatch(...)` is called
+- THEN `report.valid` is `[]`
+- AND `report.invalid` has 3 entries with codes `["EMPTY_INPUT", "INVALID_FORMAT", "INVALID_FORMAT"]`
+
+---
+
+### Requirement: detectPhoneDuplicates
+
+`detectPhoneDuplicates(phones: ReadonlyArray<string>): DedupeReport` MUST:
+- Operate on **already-normalized** E.164 strings (callers are responsible for normalization).
+- Group by exact string match.
+- Report only groups with 2 or more members in `duplicates`.
+- Report each group's `phoneE164` key and `indexes` (0-based positions in the input array).
+- Report `uniqueCount` as the count of distinct `phoneE164` values in the input.
+- MUST NOT merge, mutate, or remove any element.
+
+#### Scenario: no duplicates
+
+- GIVEN phones `["+51987654321", "+51912345678", "+51998765432"]`
+- WHEN `detectPhoneDuplicates(...)` is called
+- THEN `report.duplicates` is `[]`
+- AND `report.uniqueCount` is `3`
+
+#### Scenario: one duplicate pair
+
+- GIVEN phones `["+51987654321", "+51912345678", "+51987654321"]`
+- WHEN `detectPhoneDuplicates(...)` is called
+- THEN `report.duplicates` has exactly 1 group:
+  - `{ phoneE164: "+51987654321", indexes: [0, 2] }`
+- AND `report.uniqueCount` is `2`
+
+#### Scenario: triplicate plus a unique
+
+- GIVEN phones `["+51987654321", "+51912345678", "+51987654321", "+51987654321"]`
+- WHEN `detectPhoneDuplicates(...)` is called
+- THEN `report.duplicates` has exactly 1 group:
+  - `{ phoneE164: "+51987654321", indexes: [0, 2, 3] }`
+- AND `report.uniqueCount` is `2`
+
+#### Scenario: multiple duplicate groups
+
+- GIVEN phones `["+51987654321", "+51912345678", "+51987654321", "+51912345678"]`
+- WHEN `detectPhoneDuplicates(...)` is called
+- THEN `report.duplicates` has 2 groups:
+  - `{ phoneE164: "+51987654321", indexes: [0, 2] }`
+  - `{ phoneE164: "+51912345678", indexes: [1, 3] }`
+- AND `report.uniqueCount` is `2`
+
+#### Scenario: empty array
+
+- GIVEN phones `[]`
+- WHEN `detectPhoneDuplicates([])` is called
+- THEN `report.duplicates` is `[]`
+- AND `report.uniqueCount` is `0`
+
+#### Scenario: single element (cannot be a duplicate)
+
+- GIVEN phones `["+51987654321"]`
+- WHEN `detectPhoneDuplicates(["+51987654321"])` is called
+- THEN `report.duplicates` is `[]`
+- AND `report.uniqueCount` is `1`
+
+---
+
+## Out of Scope (Non-Requirements for This Slice: contact-phone-e164-dedupe)
+
+- Dedupe merge / winner selection — detection only.
+- Landlines — Peru mobiles only (`+51` + 9 digits, first digit `9`).
+- `WRONG_COUNTRY` error code — non-Peru inputs are `INVALID_FORMAT`.
+- Persistence, RLS, HTTP — pure domain.
+- `contactLeadSchema.phone_e164` regex tightening — separate follow-up.
+- Any alternative `Result<T, E>` shape — the shape above is final and project-wide.
+
+---
+
+## New Capability: tenant-isolation
+
+### Requirement: Contacts Table Shape
+
+The `contacts` table MUST be created with the following columns and constraints.
+
+| Column | Type | Constraint |
+|--------|------|-----------|
+| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()`, NOT NULL |
+| `tenant_id` | `UUID` | NOT NULL |
+| `phone_e164` | `TEXT` | NOT NULL |
+| `full_name` | `TEXT` | NULLABLE |
+| `source` | `TEXT` | NULLABLE |
+| `tags` | `TEXT[]` | NOT NULL, DEFAULT `'{}'` |
+| `intent` | `TEXT` | NULLABLE |
+| `intent_confidence` | `NUMERIC(5,4)` | NULLABLE; `CHECK (intent_confidence >= 0 AND intent_confidence <= 1)` |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
+| `updated_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
+| `deleted_at` | `TIMESTAMPTZ` | NULLABLE (soft-delete sentinel) |
+
+The table MUST have a unique constraint on `(tenant_id, phone_e164)`.
+Row-level security MUST be ENABLED on the table.
+The `intent_confidence` column MUST carry a `CHECK (intent_confidence >= 0 AND intent_confidence <= 1)` constraint so out-of-range values are rejected at the database level.
+
+> **NOTE — driver numeric coercion:** Some Postgres drivers return `NUMERIC` columns as strings. The domain type `Contact.intentConfidence` MUST be declared as `number | null` and the repository mapping MUST coerce the raw driver value to a JS `number` (e.g. via `parseFloat`) before returning the domain object.
+
+#### Scenario: table exists with correct shape
+
+- GIVEN a fresh Drizzle migration has been applied
+- WHEN the schema is introspected
+- THEN `contacts` exists with all columns above
+- AND a unique index on `(tenant_id, phone_e164)` is present
+- AND RLS is enabled on the table
+
+#### Scenario: out-of-range intent_confidence is rejected
+
+- GIVEN a valid tenant context is set
+- WHEN an INSERT or UPDATE sets `intent_confidence = 1.5`
+- THEN the database rejects the write with a CHECK constraint violation
+- AND no row is persisted or modified
+
+#### Scenario: intent_confidence returned as JS number
+
+- GIVEN a contact was stored with `intent_confidence = 0.9500`
+- WHEN the repository returns the domain `Contact` object
+- THEN `contact.intentConfidence` is the JS `number` `0.95` (not the string `"0.9500"`)
+- AND `typeof contact.intentConfidence === 'number'` is `true`
+
+---
+
+### Requirement: RLS Tenant Isolation Policy
+
+The `contacts` table MUST have a row-level security policy named `tenant_isolation` that restricts SELECT, INSERT, UPDATE, and DELETE to rows where `tenant_id = current_setting('app.current_tenant')::uuid`.
+
+- The policy MUST be created via the SQL migration (not application code).
+- NO application query on `contacts` MAY include an explicit `WHERE tenant_id = ?` clause; isolation is enforced exclusively by RLS.
+- The session variable MUST be set via `SET LOCAL app.current_tenant = '<uuid>'` inside a transaction before any query executes.
+
+> **NOTE — app-role enforcement:** Postgres RLS is bypassed by superusers and (without `FORCE ROW LEVEL SECURITY`) by the table owner. Therefore: (1) the application MUST connect as a dedicated non-superuser, non-BYPASSRLS role named `app_rls`; (2) the migration MUST provision `app_rls` with the minimal grant `GRANT SELECT, INSERT, UPDATE, DELETE ON contacts TO app_rls`; (3) integration tests that assert RLS behaviour MUST connect AS `app_rls`, not as the migration superuser.
+
+#### Scenario: tenant A cannot see tenant B rows (SELECT isolation)
+
+- GIVEN tenant A (id `aaa...`) and tenant B (id `bbb...`) each have one contact in the DB
+- WHEN `SET LOCAL app.current_tenant = 'aaa...'` is run in a transaction
+- AND `SELECT * FROM contacts` is executed
+- THEN only the row with `tenant_id = 'aaa...'` is returned
+- AND the row with `tenant_id = 'bbb...'` is NOT returned
+
+#### Scenario: tenant A cannot update tenant B rows
+
+- GIVEN a row belonging to tenant B
+- WHEN `SET LOCAL app.current_tenant = 'aaa...'` is run
+- AND an `UPDATE contacts SET full_name = 'X' WHERE id = <tenant_B_id>` is executed
+- THEN 0 rows are affected (RLS hides the row; no error is raised)
+
+#### Scenario: tenant A cannot delete tenant B rows
+
+- GIVEN a row belonging to tenant B
+- WHEN `SET LOCAL app.current_tenant = 'aaa...'` is run
+- AND a `DELETE FROM contacts WHERE id = <tenant_B_id>` is executed
+- THEN 0 rows are affected
+
+#### Scenario: no SET LOCAL → query returns empty
+
+- GIVEN rows exist in the `contacts` table
+- WHEN a query is run in a transaction WITHOUT calling `SET LOCAL app.current_tenant`
+- THEN 0 rows are returned (RLS default-deny when setting is absent or empty string)
+
+#### Scenario: RLS holds under non-superuser app role (app-role enforcement)
+
+- GIVEN the app connects as the non-superuser role `app_rls` (not the Postgres superuser or table owner)
+- AND tenant A and tenant B each have one contact row
+- WHEN `SET LOCAL app.current_tenant = 'aaa...'` is run inside a transaction
+- AND `SELECT * FROM contacts` is executed
+- THEN only the tenant A row is returned
+- AND the tenant B row is NOT returned
+
+#### Scenario: WITH CHECK blocks foreign-tenant INSERT
+
+- GIVEN `SET LOCAL app.current_tenant = 'aaa...'` is set in the current transaction
+- WHEN an INSERT into `contacts` specifies a row with `tenant_id = 'bbb...'` (tenant B)
+- THEN the INSERT is rejected by the `WITH CHECK` clause of the `tenant_isolation` policy
+- AND no row is persisted
+
+---
+
+### Requirement: Tenant Middleware
+
+The backend MUST provide a tenant middleware that sets the session tenant before any domain route handler executes.
+
+- In `AUTH_MODE=dev-header`, the middleware MUST read the `X-Tenant-Id` header, validate it as a UUID via Zod, and run `SET LOCAL app.current_tenant = '<uuid>'` inside the request transaction.
+- A missing `X-Tenant-Id` header MUST result in a `401 Unauthorized` response; the route handler MUST NOT be invoked.
+- An `X-Tenant-Id` header with a non-UUID value MUST result in a `400 Bad Request` response.
+- The `AUTH_MODE=dev-header` behavior MUST be gated by the `AUTH_MODE` environment variable; it MUST NOT be active in production (`AUTH_MODE !== 'dev-header'`).
+- The middleware MUST be attached to all `/contacts` routes and any future domain routes; it MUST NOT be attached to the `/health` route.
+
+#### Scenario: valid UUID header → request proceeds
+
+- GIVEN `AUTH_MODE=dev-header` and `X-Tenant-Id: 550e8400-e29b-41d4-a716-446655440000`
+- WHEN a request is made to `GET /contacts`
+- THEN the middleware sets `app.current_tenant` to that UUID
+- AND the route handler is invoked
+- AND the response status is `200`
+
+#### Scenario: missing header → 401
+
+- GIVEN `AUTH_MODE=dev-header` and no `X-Tenant-Id` header
+- WHEN a request is made to `GET /contacts`
+- THEN the response status is `401`
+- AND the response body contains `{ "error": "MISSING_TENANT" }`
+- AND the route handler is NOT invoked
+
+#### Scenario: non-UUID header value → 400
+
+- GIVEN `AUTH_MODE=dev-header` and `X-Tenant-Id: not-a-uuid`
+- WHEN a request is made to `GET /contacts`
+- THEN the response status is `400`
+- AND the response body contains `{ "error": "INVALID_TENANT_ID" }`
+
+---
+
+## New Capability: contacts-persistence
+
+### Requirement: Contacts Repository Interface
+
+`createContactsRepository(db)` MUST return a repository with the following operations. Every operation MUST return `Result<T, ContactsRepositoryError>`; domain code MUST NOT throw.
+
+| Operation | Signature summary | Description |
+|-----------|------------------|-------------|
+| `create` | `(input: CreateContactInput) => Promise<Result<Contact, ContactsRepositoryError>>` | Normalize phone, check for conflict or soft-deleted row, persist |
+| `findById` | `(id: string) => Promise<Result<Contact, ContactsRepositoryError>>` | Fetch active (non-deleted) row by UUID |
+| `list` | `(opts?: ListContactsOptions) => Promise<Result<Contact[], ContactsRepositoryError>>` | List active contacts, no soft-deleted rows |
+| `update` | `(id: string, patch: UpdateContactInput) => Promise<Result<Contact, ContactsRepositoryError>>` | Update mutable fields; touch `updated_at` |
+| `softDelete` | `(id: string) => Promise<Result<void, ContactsRepositoryError>>` | Set `deleted_at = now()`; idempotent |
+
+`ContactsRepositoryError` codes:
+
+| Code | Meaning |
+|------|---------|
+| `CONTACT_NOT_FOUND` | No active row with that id under the current tenant |
+| `CONTACT_ALREADY_EXISTS` | A live contact with the same normalized `phone_e164` already exists for this tenant |
+| `INVALID_PHONE` | The provided phone fails `normalizePhoneE164` |
+| `DB_ERROR` | Unexpected infrastructure failure |
+
+---
+
+### Requirement: Create Contact — Happy Path
+
+`create` MUST normalize the input phone via `normalizePhoneE164`, store the E.164 value in `phone_e164`, and return `ok(contact)` on success.
+
+#### Scenario: create new contact succeeds
+
+- GIVEN the current tenant has no contact with phone `"987654321"`
+- WHEN `create({ phone: "987654321", full_name: "Ana García" })` is called
+- THEN `result.ok` is `true`
+- AND `result.value.phone_e164` is `"+51987654321"`
+- AND `result.value.full_name` is `"Ana García"`
+- AND `result.value.deleted_at` is `null`
+- AND `result.value.id` is a UUID
+
+---
+
+### Requirement: Create Contact — Conflict Semantics
+
+If a live (non-deleted) contact with the same normalized `phone_e164` already exists for the current tenant, `create` MUST return `err({ code: 'CONTACT_ALREADY_EXISTS' })`. If a soft-deleted contact with the same phone exists, `create` MUST resurrect it: clear `deleted_at`, apply the new field values, update `updated_at`, and return `ok(resurrectedContact)`.
+
+#### Scenario: phone already exists (live) → 409 domain error
+
+- GIVEN a live contact with `phone_e164 = "+51987654321"` exists for the current tenant
+- WHEN `create({ phone: "+51987654321", full_name: "Otro" })` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"CONTACT_ALREADY_EXISTS"`
+
+#### Scenario: phone belongs to soft-deleted contact → resurrect
+
+- GIVEN a contact with `phone_e164 = "+51987654321"` was soft-deleted (`deleted_at` is set)
+- WHEN `create({ phone: "+51987654321", full_name: "Ana Reborn" })` is called
+- THEN `result.ok` is `true`
+- AND `result.value.deleted_at` is `null`
+- AND `result.value.full_name` is `"Ana Reborn"`
+- AND no new row is inserted (same `id` as the original)
+
+#### Scenario: invalid phone → domain error
+
+- GIVEN any tenant state
+- WHEN `create({ phone: "abcdef" })` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"INVALID_PHONE"`
+
+---
+
+### Requirement: Find Contact By Id
+
+`findById` MUST return the contact if it exists and is not soft-deleted. Soft-deleted rows MUST be treated as non-existent.
+
+#### Scenario: active contact found
+
+- GIVEN a contact with `id = "uuid-1"` exists and `deleted_at` is null
+- WHEN `findById("uuid-1")` is called
+- THEN `result.ok` is `true`
+- AND `result.value.id` is `"uuid-1"`
+
+#### Scenario: soft-deleted contact → not found
+
+- GIVEN a contact with `id = "uuid-2"` has `deleted_at` set
+- WHEN `findById("uuid-2")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"CONTACT_NOT_FOUND"`
+
+#### Scenario: id does not exist
+
+- GIVEN no contact with `id = "uuid-999"` exists
+- WHEN `findById("uuid-999")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"CONTACT_NOT_FOUND"`
+
+---
+
+### Requirement: List Contacts
+
+`list` MUST return only active (non-deleted) contacts for the current tenant. Soft-deleted rows MUST be excluded. Results MUST be ordered by `created_at DESC` by default; callers MUST NOT rely on any other ordering unless a future `opts.orderBy` parameter is explicitly specified.
+
+#### Scenario: returns only active contacts
+
+- GIVEN 3 contacts exist: 2 active, 1 soft-deleted
+- WHEN `list()` is called
+- THEN `result.ok` is `true`
+- AND `result.value` has exactly 2 entries
+- AND none of the entries has `deleted_at` set
+
+#### Scenario: empty list when no contacts
+
+- GIVEN the current tenant has no contacts
+- WHEN `list()` is called
+- THEN `result.ok` is `true`
+- AND `result.value` is `[]`
+
+#### Scenario: list is ordered by created_at DESC
+
+- GIVEN 3 active contacts created at times T1 < T2 < T3 (oldest to newest)
+- WHEN `list()` is called
+- THEN `result.ok` is `true`
+- AND `result.value[0].createdAt` equals T3 (most recent first)
+- AND `result.value[2].createdAt` equals T1 (oldest last)
+
+---
+
+### Requirement: Update Contact
+
+`update` MUST patch only the provided fields, leave unspecified fields unchanged, and set `updated_at = now()`. Attempting to update a non-existent or soft-deleted contact MUST return `err({ code: 'CONTACT_NOT_FOUND' })`.
+
+#### Scenario: partial update succeeds
+
+- GIVEN a contact with `id = "uuid-1"` and `full_name = "Ana"` and `tags = []`
+- WHEN `update("uuid-1", { full_name: "Ana García" })` is called
+- THEN `result.ok` is `true`
+- AND `result.value.full_name` is `"Ana García"`
+- AND `result.value.tags` is `[]` (unchanged)
+- AND `result.value.updated_at` is more recent than the original `updated_at`
+
+#### Scenario: update soft-deleted contact → not found
+
+- GIVEN contact `"uuid-2"` is soft-deleted
+- WHEN `update("uuid-2", { full_name: "X" })` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"CONTACT_NOT_FOUND"`
+
+---
+
+### Requirement: Soft Delete Contact
+
+`softDelete` MUST set `deleted_at = now()` for the target contact. Soft-deleting an already-deleted contact MUST be idempotent (returns `ok(void)`). Soft-deleting a non-existent id MUST return `err({ code: 'CONTACT_NOT_FOUND' })`.
+
+#### Scenario: soft delete active contact
+
+- GIVEN a contact with `id = "uuid-1"` and `deleted_at` null
+- WHEN `softDelete("uuid-1")` is called
+- THEN `result.ok` is `true`
+- AND a subsequent `findById("uuid-1")` returns `CONTACT_NOT_FOUND`
+
+#### Scenario: soft delete is idempotent on already-deleted contact
+
+- GIVEN a contact with `id = "uuid-1"` already has `deleted_at` set
+- WHEN `softDelete("uuid-1")` is called
+- THEN `result.ok` is `true`
+
+#### Scenario: soft delete non-existent id
+
+- GIVEN no contact with `id = "uuid-999"` exists
+- WHEN `softDelete("uuid-999")` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `"CONTACT_NOT_FOUND"`
+
+---
+
+## New Capability: contacts-crud-api
+
+### Requirement: Result → HTTP Status Mapping
+
+Every `ContactsRepositoryError` code MUST map to a specific HTTP status as follows. Routes MUST use this mapping exclusively; no ad-hoc status decisions are permitted.
+
+| Domain error code | HTTP status | Response body key |
+|------------------|-------------|-------------------|
+| `CONTACT_ALREADY_EXISTS` | `409 Conflict` | `{ "error": "CONTACT_ALREADY_EXISTS" }` |
+| `CONTACT_NOT_FOUND` | `404 Not Found` | `{ "error": "CONTACT_NOT_FOUND" }` |
+| `INVALID_PHONE` | `422 Unprocessable Entity` | `{ "error": "INVALID_PHONE" }` |
+| `DB_ERROR` | `500 Internal Server Error` | `{ "error": "INTERNAL_ERROR" }` |
+| Zod validation failure | `400 Bad Request` | `{ "error": "VALIDATION_ERROR", "details": [...] }` |
+
+---
+
+### Requirement: POST /contacts — Create Contact
+
+`POST /contacts` MUST accept a JSON body, validate via Zod, invoke `repository.create`, and return an HTTP response per the mapping table.
+
+Request body schema:
+```
+{ phone: string (required), full_name?: string, source?: string, tags?: string[], intent?: string, intent_confidence?: number }
+```
+
+#### Scenario: create succeeds → 201
+
+- GIVEN a valid request body `{ "phone": "987654321", "full_name": "Ana" }` and tenant header set
+- WHEN `POST /contacts` is called
+- THEN the response status is `201`
+- AND the response body contains the created contact with `phone_e164: "+51987654321"`
+
+#### Scenario: phone already exists → 409
+
+- GIVEN a live contact with `phone_e164 = "+51987654321"` already exists
+- WHEN `POST /contacts` with `{ "phone": "+51987654321" }` is called
+- THEN the response status is `409`
+- AND the body is `{ "error": "CONTACT_ALREADY_EXISTS" }`
+
+#### Scenario: invalid phone format → 422
+
+- GIVEN request body `{ "phone": "abcdef" }`
+- WHEN `POST /contacts` is called
+- THEN the response status is `422`
+- AND the body is `{ "error": "INVALID_PHONE" }`
+
+#### Scenario: missing required field → 400
+
+- GIVEN request body `{}` (no phone field)
+- WHEN `POST /contacts` is called
+- THEN the response status is `400`
+- AND the body contains `{ "error": "VALIDATION_ERROR" }`
+
+---
+
+### Requirement: GET /contacts — List Contacts
+
+`GET /contacts` MUST return all active contacts for the current tenant as a JSON array, ordered by `created_at DESC`.
+
+#### Scenario: list returns active contacts
+
+- GIVEN 2 active contacts exist for the current tenant
+- WHEN `GET /contacts` is called with valid tenant header
+- THEN the response status is `200`
+- AND the body is `{ "data": [ <contact>, <contact> ] }`
+- AND no soft-deleted contacts are included
+
+#### Scenario: empty list
+
+- GIVEN no active contacts exist for the current tenant
+- WHEN `GET /contacts` is called
+- THEN the response status is `200`
+- AND the body is `{ "data": [] }`
+
+---
+
+### Requirement: GET /contacts/:id — Get Contact By Id
+
+`GET /contacts/:id` MUST return the contact if found and active. If not found or soft-deleted, return 404.
+
+#### Scenario: found → 200
+
+- GIVEN contact `uuid-1` is active
+- WHEN `GET /contacts/uuid-1` is called
+- THEN the response status is `200`
+- AND the body contains the contact object
+
+#### Scenario: not found → 404
+
+- GIVEN no active contact with `id = "uuid-999"` exists
+- WHEN `GET /contacts/uuid-999` is called
+- THEN the response status is `404`
+- AND the body is `{ "error": "CONTACT_NOT_FOUND" }`
+
+---
+
+### Requirement: PATCH /contacts/:id — Update Contact
+
+`PATCH /contacts/:id` MUST accept a partial JSON body (all fields optional), validate via Zod, invoke `repository.update`, and return the updated contact or an error.
+
+Request body schema (all fields optional):
+```
+{ full_name?: string, source?: string, tags?: string[], intent?: string, intent_confidence?: number }
+```
+
+#### Scenario: update succeeds → 200
+
+- GIVEN contact `uuid-1` is active
+- WHEN `PATCH /contacts/uuid-1` with `{ "full_name": "Nueva" }` is called
+- THEN the response status is `200`
+- AND the body contains the updated contact with `full_name: "Nueva"`
+
+#### Scenario: contact not found → 404
+
+- GIVEN no active contact with `id = "uuid-999"` exists
+- WHEN `PATCH /contacts/uuid-999` with any body is called
+- THEN the response status is `404`
+
+---
+
+### Requirement: DELETE /contacts/:id — Soft Delete Contact
+
+`DELETE /contacts/:id` MUST invoke `repository.softDelete` and return `204 No Content` on success.
+
+#### Scenario: delete succeeds → 204
+
+- GIVEN contact `uuid-1` is active
+- WHEN `DELETE /contacts/uuid-1` is called
+- THEN the response status is `204`
+- AND a subsequent `GET /contacts/uuid-1` returns `404`
+
+#### Scenario: contact not found → 404
+
+- GIVEN no contact with `id = "uuid-999"` exists
+- WHEN `DELETE /contacts/uuid-999` is called
+- THEN the response status is `404`
+
+---
+
+## Extended Capability: contacts (merged from contacts-table-rls-crud)
+
+### ADDED Requirement: Contact Domain Type
+
+The contacts domain MUST define a `Contact` type representing a persisted contact record. All fields correspond directly to the `contacts` table columns. `deleted_at` is included in the type but MUST be `null` in all values returned from repository read operations (findById, list, update).
+
+#### Scenario: Contact type is complete and matches table shape
+
+- GIVEN the `Contact` type is defined in the contacts domain
+- WHEN a contact is created and retrieved
+- THEN it has: `id` (UUID string), `tenantId` (UUID string), `phoneE164` (E.164 string), `full_name` (string or null), `source` (string or null), `tags` (string[]), `intent` (string or null), `intentConfidence` (number or null), `createdAt` (Date), `updatedAt` (Date), `deletedAt` (Date or null)
+
+---
+
+## Extended Capability: contacts-bulk-import
+
+### Requirement: ImportRow Schema
+
+The system MUST accept each row in the import batch with the following shape. `phone` is the only required field; all others are optional and nullable.
+
+| Field | Type | Required |
+|---|---|---|
+| `phone` | `string` (min 1) | YES |
+| `fullName` | `string \| null` | no |
+| `source` | `string \| null` | no |
+| `tags` | `string[]` | no |
+| `intent` | `string \| null` | no |
+| `intentConfidence` | `number (0–1) \| null` | no |
+
+The batch wrapper MUST be `{ contacts: ImportRow[] }` with `contacts.length >= 1` and `contacts.length <= 200`. Violating either bound is a batch-level error (400), not a per-row error.
+
+---
+
+### Requirement: RowOutcome Enum
+
+The system MUST classify each input row with exactly one of the following outcomes:
+
+| Outcome | Meaning |
+|---|---|
+| `imported` | New contact created; row was valid and phone did not exist. |
+| `resurrected` | Soft-deleted contact with the same phone was reactivated (same `id`, `deleted_at` cleared). |
+| `skipped-invalid-phone` | Phone failed `normalizePhoneE164`; no DB operation performed. |
+| `skipped-duplicate-in-batch` | A prior row in the same batch already claimed this normalized phone. |
+| `skipped-already-exists` | A live contact with the same normalized phone already exists (includes concurrent-create race caught by 23505). |
+| `error` | An unexpected infrastructure error (DB_ERROR) occurred while processing this row; remaining rows are still processed. |
+
+---
+
+### Requirement: importContacts Service
+
+`importContacts(repo: ContactsRepository, rows: ImportRow[]): Promise<ImportReport>` MUST:
+
+- Normalize each row's phone via `normalizePhoneE164` (per-row, preserving `index`).
+- Detect within-batch duplicates over the valid normalized phones; only the first occurrence (lowest index) proceeds; later occurrences become `skipped-duplicate-in-batch` with `canonicalRowIndex` pointing to the first occurrence.
+- For each valid, in-batch-unique phone: invoke `repo.create(row)` in a separate `withTenant` transaction (NO outer transaction wrapper).
+- Map `repo.create` results: `ok(contact)` → `imported` or `resurrected` (determined by whether `contact.deletedAt` was previously set — the repo handles this transparently); `err(CONTACT_ALREADY_EXISTS)` → `skipped-already-exists`.
+- Return `ImportReport` with `summary` counts and per-row `rows` array in submission order.
+- MUST NOT use `WHERE tenant_id` — RLS via `withTenant` only.
+- MUST return `Result<T, E>` shapes in domain logic; MUST NOT throw.
+
+---
+
+### Requirement: POST /contacts/import — Batch Import Endpoint
+
+`POST /contacts/import` MUST accept a JSON body, validate via Zod, invoke `importContacts`, and return HTTP 200 with `ImportReport`.
+
+Request body: `{ contacts: ImportRow[] }`
+
+Response body (HTTP 200 or 500 when errors > 0):
+```
+{
+  summary: {
+    total: number,
+    imported: number,
+    resurrected: number,
+    skippedInvalidPhone: number,
+    skippedDuplicateInBatch: number,
+    skippedAlreadyExists: number,
+    errors: number
+  },
+  rows: Array<{
+    index: number,          // 0-based, preserves submission order
+    input: ImportRow,       // original row as received
+    outcome: RowOutcome,
+    contactId?: string,     // present when outcome is imported | resurrected
+    reason?: string,        // present when outcome is skipped-invalid-phone
+    canonicalRowIndex?: number,  // present when outcome is skipped-duplicate-in-batch
+    code?: string           // present when outcome is error
+  }>
+}
+```
+
+Batch-level 400 errors (before per-row processing):
+- Empty array (`contacts.length < 1`) → `{ "error": "VALIDATION_ERROR", "details": [...] }`
+- Over-limit (`contacts.length > 200`) → `{ "error": "VALIDATION_ERROR", "details": [...] }`
+- Malformed body (not parseable JSON, missing `contacts` key) → `{ "error": "VALIDATION_ERROR", "details": [...] }`
+
+DB_ERROR on any row → HTTP 500 (full report body still returned, `summary.errors > 0`).
+
+---
+
+#### Scenario: valid new row → imported
+
+- GIVEN a tenant with no existing contact for phone `"987654321"`
+- WHEN `POST /contacts/import` with `{ contacts: [{ phone: "987654321", fullName: "Ana" }] }` is called
+- THEN the response status is `200`
+- AND `body.rows[0].outcome` is `"imported"`
+- AND `body.rows[0].contactId` is a UUID
+- AND `body.summary.imported` is `1`
+- AND a contact with `phone_e164 = "+51987654321"` exists in the DB for that tenant
+
+---
+
+#### Scenario: row whose phone matches soft-deleted contact → resurrected
+
+- GIVEN a contact with `phone_e164 = "+51987654321"` was soft-deleted (`deleted_at` is set) for the current tenant
+- WHEN `POST /contacts/import` with `{ contacts: [{ phone: "+51987654321", fullName: "Ana Reborn" }] }` is called
+- THEN the response status is `200`
+- AND `body.rows[0].outcome` is `"resurrected"`
+- AND `body.rows[0].contactId` equals the original contact's `id` (same row, not a new one)
+- AND the contact's `deleted_at` is now `null`
+- AND `body.summary.resurrected` is `1`
+
+---
+
+#### Scenario: row whose phone matches a live contact → skipped-already-exists
+
+- GIVEN a live contact with `phone_e164 = "+51987654321"` exists for the current tenant
+- WHEN `POST /contacts/import` with `{ contacts: [{ phone: "+51987654321" }] }` is called
+- THEN the response status is `200`
+- AND `body.rows[0].outcome` is `"skipped-already-exists"`
+- AND `body.rows[0].contactId` is undefined
+- AND `body.summary.skippedAlreadyExists` is `1`
+- AND the existing contact row is NOT modified
+
+---
+
+#### Scenario: two rows with same phone in one batch → first imported, second skipped-duplicate-in-batch
+
+- GIVEN the current tenant has no existing contact for phone `"987654321"`
+- WHEN `POST /contacts/import` with `{ contacts: [{ phone: "987654321" }, { phone: "+51987654321" }] }` is called
+- THEN the response status is `200`
+- AND `body.rows[0].outcome` is `"imported"` with a `contactId`
+- AND `body.rows[1].outcome` is `"skipped-duplicate-in-batch"`
+- AND `body.rows[1].canonicalRowIndex` is `0`
+- AND `body.summary.imported` is `1`
+- AND `body.summary.skippedDuplicateInBatch` is `1`
+- AND exactly ONE contact row exists in the DB for that phone
+
+---
+
+#### Scenario: row with invalid phone → skipped-invalid-phone (200 report, no DB row)
+
+- GIVEN any tenant state
+- WHEN `POST /contacts/import` with `{ contacts: [{ phone: "abcdef" }] }` is called
+- THEN the response status is `200`
+- AND `body.rows[0].outcome` is `"skipped-invalid-phone"`
+- AND `body.rows[0].reason` is `"INVALID_FORMAT"` (or `"EMPTY_INPUT"` for blank phone)
+- AND `body.summary.skippedInvalidPhone` is `1`
+- AND no DB row is created
+
+---
+
+### Requirement: Batch-Level 400 Validation
+
+The endpoint MUST reject the entire request with HTTP 400 before any per-row processing occurs when the batch violates structural constraints.
+
+#### Scenario: empty contacts array → 400
+
+- GIVEN a valid tenant header is set
+- WHEN `POST /contacts/import` with `{ contacts: [] }` is called
+- THEN the response status is `400`
+- AND the body is `{ "error": "VALIDATION_ERROR", "details": [...] }`
+- AND no contact is created
+
+---
+
+#### Scenario: more than 200 rows → 400
+
+- GIVEN a valid tenant header is set
+- WHEN `POST /contacts/import` with an array of 201 rows is called
+- THEN the response status is `400`
+- AND the body is `{ "error": "VALIDATION_ERROR", "details": [...] }`
+
+---
+
+#### Scenario: malformed body → 400
+
+- GIVEN a valid tenant header is set
+- WHEN `POST /contacts/import` is called with body `"not-json"` or `{}` (missing `contacts` key)
+- THEN the response status is `400`
+- AND the body is `{ "error": "VALIDATION_ERROR", "details": [...] }`
+
+---
+
+### Requirement: Tenant Isolation for Bulk Import
+
+Contacts imported under tenant A MUST NOT be visible to tenant B. RLS via `withTenant` enforces this; no `WHERE tenant_id` clause is permitted in the service or route.
+
+#### Scenario: tenant A import invisible to tenant B
+
+- GIVEN tenant A (id `aaa...`) and tenant B (id `bbb...`) share the same Postgres instance
+- WHEN `POST /contacts/import` is called with tenant A's header and one valid row (phone `"987654321"`)
+- AND `GET /contacts` is called with tenant B's header
+- THEN tenant B's response contains no contact with `phone_e164 = "+51987654321"`
+- AND the contact exists and is queryable under tenant A
+
+---
+
+### Requirement: Summary Counts Are Consistent
+
+`summary.total` MUST equal `contacts.length` (the number of rows in the request). The sum of `imported + resurrected + skippedInvalidPhone + skippedDuplicateInBatch + skippedAlreadyExists + errors` MUST equal `summary.total`. Every input row MUST appear in `rows` at its original `index`.
+
+#### Scenario: mixed batch summary is consistent
+
+- GIVEN a batch of 4 rows: one valid new, one invalid phone, one duplicate of first, one already-exists
+- WHEN `POST /contacts/import` is called
+- THEN `body.summary.total` is `4`
+- AND `body.summary.imported + body.summary.resurrected + body.summary.skippedInvalidPhone + body.summary.skippedDuplicateInBatch + body.summary.skippedAlreadyExists + body.summary.errors` equals `4`
+- AND `body.rows` has exactly 4 entries, each with a distinct `index` from `0` to `3`
+
+---
+
+## Out of Scope (Non-Requirements for This Slice: contacts-bulk-import)
+
+- CSV/multipart file upload (deferred to a later slice requiring web UI).
+- Async/background import via pg-boss (deferred for batches >500 rows).
+- All-or-nothing transactional rollback (per-row best-effort is the intended UX).
+- `bulkCreate(tx, rows[])` single-transaction bulk method (nested `withTenant` is unsupported by postgres.js).
+- Set-based SQL bulk insert (deferred for >500 row scale).
+- Web dashboard import UI.
+- `WHERE tenant_id` in any query (RLS only, always).
+
+---
+
+## New Capability: contactlead-routing
+
+### Requirement: contacts.routed_at Column
+
+The `contacts` table MUST gain a nullable `routed_at TIMESTAMPTZ` column.
+
+| Column | Type | Constraint |
+|--------|------|------------|
+| `routed_at` | `TIMESTAMPTZ` | NULLABLE; `NULL` means not yet routed |
+
+`NULL` is the canonical "not yet routed" sentinel. A non-null value means the contact has been successfully routed at least once. This column MUST NOT have a non-null default.
+
+---
+
+### Requirement: contact_lead_outbox Table
+
+The system MUST create a `contact_lead_outbox` table with the following shape.
+
+| Column | Type | Constraint |
+|--------|------|------------|
+| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()`, NOT NULL |
+| `tenant_id` | `UUID` | NOT NULL |
+| `contact_id` | `UUID` | NOT NULL |
+| `payload` | `JSONB` | NOT NULL |
+| `status` | `TEXT` | NOT NULL, DEFAULT `'pending'` |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL, DEFAULT `now()` |
+
+RLS rules for `contact_lead_outbox`:
+- Row-level security MUST be `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`.
+- A `tenant_isolation` policy MUST restrict SELECT and INSERT to rows where `tenant_id = current_setting('app.current_tenant')::uuid` (`USING` and `WITH CHECK`).
+- The migration MUST `GRANT SELECT, INSERT ON contact_lead_outbox TO app_rls`.
+- NO application query MAY include an explicit `WHERE tenant_id` clause; isolation is enforced exclusively by RLS.
+
+#### Scenario: outbox table exists with correct shape
+
+- GIVEN the `0001_routing.sql` migration has been applied
+- WHEN the schema is introspected
+- THEN `contact_lead_outbox` exists with all columns above
+- AND RLS is enabled and forced on the table
+- AND `app_rls` has SELECT and INSERT grants
+
+---
+
+### Requirement: ContactRoutingError Type
+
+The system MUST define `ContactRoutingError` as a discriminated union with the following codes. No other codes are permitted in this slice.
+
+| Code | Meaning |
+|------|---------|
+| `CONTACT_NOT_FOUND` | No active contact with that id under the current tenant |
+| `MISSING_FULL_NAME` | The contact's `full_name` is `null`; routing is blocked |
+| `DB_ERROR` | Unexpected infrastructure failure |
+
+`ContactRoutingError` values MUST be returned via `err(...)` — domain logic MUST NOT throw.
+
+---
+
+### Requirement: ContactLead Mapping
+
+`mapContactToLead(contact): Result<ContactLead, ContactRoutingError>` MUST produce a `ContactLead` with the following field mapping. The function MUST be pure (no I/O).
+
+| ContactLead field | Source |
+|-------------------|--------|
+| `external_id` | `contact.id` |
+| `phone_e164` | `contact.phoneE164` |
+| `full_name` | `contact.full_name` (guaranteed non-null past the gate) |
+| `source` | Always the literal `'whatsapp'` |
+| `intent` | `contact.intent ?? undefined` (null → undefined) |
+| `intent_confidence` | `contact.intentConfidence ?? undefined` (null → undefined) |
+| `tags` | `contact.tags` (passthrough) |
+| `form_payload` | Always `undefined` |
+| `captured_at` | `contact.createdAt.toISOString()` |
+| `tenant_id` | `contact.tenantId` |
+
+`full_name` null check MUST happen before mapping. If `contact.full_name` is null, the function MUST return `err({ code: 'MISSING_FULL_NAME' })` without producing a partial `ContactLead`.
+
+#### Scenario: valid contact maps to ContactLead
+
+- GIVEN a contact with all fields populated (`full_name` non-null, `intent = 'buy'`, `intent_confidence = 0.9`, `tags = ['vip']`, created at `T`)
+- WHEN `mapContactToLead(contact)` is called
+- THEN `result.ok` is `true`
+- AND `result.value.external_id` equals `contact.id`
+- AND `result.value.source` is the string `'whatsapp'`
+- AND `result.value.captured_at` equals `contact.createdAt.toISOString()`
+- AND `result.value.form_payload` is `undefined`
+
+#### Scenario: null intent maps to undefined
+
+- GIVEN a contact with `intent = null` and `intent_confidence = null`
+- WHEN `mapContactToLead(contact)` is called
+- THEN `result.ok` is `true`
+- AND `result.value.intent` is `undefined`
+- AND `result.value.intent_confidence` is `undefined`
+
+#### Scenario: null full_name blocks mapping
+
+- GIVEN a contact with `full_name = null`
+- WHEN `mapContactToLead(contact)` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `'MISSING_FULL_NAME'`
+
+---
+
+### Requirement: routeContact Service
+
+`routeContact(withTenant: TenantRunner, tenantId: string, contactId: string): Promise<Result<ContactLead, ContactRoutingError>>` MUST execute ALL reads and writes atomically inside a SINGLE `withTenant` transaction. No partial commits are permitted.
+
+> **ADR-3 reconciliation**: The original spec referenced `routeContact(id, repo, db)` with `repo.findById`. This was corrected in the design: the service performs the SELECT itself inside the same `withTenant` tx as the writes (not via `repo.findById` which opens its own tx). One tx = atomic read + branch + write. See design §4.3 and §6 ADR-3.
+
+Within that transaction, the service MUST follow this decision sequence:
+
+1. Fetch the contact by `id` (active, non-deleted) via the repository. If not found → `err(CONTACT_NOT_FOUND)`.
+2. If `contact.full_name` is null → `err(MISSING_FULL_NAME)`. No DB write occurs.
+3. If `contact.routed_at` is non-null → return `ok(mapped ContactLead)` immediately. Do NOT update `routed_at`. Do NOT insert an outbox row.
+4. Otherwise: set `contacts.routed_at = now()` AND insert one `contact_lead_outbox` row with `payload` = the mapped `ContactLead` (validated against `contactLeadSchema` at write time) and `status = 'pending'`. Return `ok(mapped ContactLead)`.
+
+Any unexpected DB failure MUST return `err({ code: 'DB_ERROR' })` — never throw.
+
+#### Scenario: route valid named contact — happy path
+
+- GIVEN a contact exists with `full_name = 'Ana García'`, `routed_at = null`, active (not deleted)
+- WHEN `routeContact(withTenant, contact.tenantId, contact.id)` is called
+- THEN `result.ok` is `true`
+- AND `result.value` is a valid `ContactLead` with `source = 'whatsapp'`, `external_id = contact.id`, `captured_at = contact.createdAt.toISOString()`
+- AND `contacts.routed_at` is set to a non-null timestamp in the DB
+- AND exactly ONE row exists in `contact_lead_outbox` for this `contact_id`
+- AND the outbox row's `payload` validates against `contactLeadSchema`
+
+#### Scenario: contact has null full_name — rejected
+
+- GIVEN a contact with `full_name = null`, `routed_at = null`
+- WHEN `routeContact(withTenant, contact.tenantId, contact.id)` is called
+- THEN `result.ok` is `false`
+- AND `result.error.code` is `'MISSING_FULL_NAME'`
+- AND `contacts.routed_at` remains `null`
+- AND no row is inserted in `contact_lead_outbox`
+
+#### Scenario: contact already routed — no-op
+
+- GIVEN a contact with `full_name = 'Ana'`, `routed_at` non-null, and exactly ONE existing outbox row
+- WHEN `routeContact(withTenant, contact.tenantId, contact.id)` is called again
+- THEN `result.ok` is `true`
+- AND `contacts.routed_at` is unchanged (same timestamp as before)
+- AND `contact_lead_outbox` still contains exactly ONE row for this `contact_id` (no duplicate inserted)
+
+#### Scenario: atomicity — routed_at and outbox are written together or not at all
+
+- GIVEN a contact eligible for routing
+- WHEN a simulated failure occurs after `routed_at` is set but before the outbox INSERT commits (e.g., transaction rollback)
+- THEN `contacts.routed_at` remains `null`
+- AND no outbox row exists for this contact
+- AND `result.ok` is `false`
+
+---
+
+### Requirement: POST /contacts/:id/route Endpoint
+
+`POST /contacts/:id/route` MUST be registered on the contacts router. The endpoint MUST:
+
+- Require `X-Tenant-Id` (enforced by existing tenant middleware; missing/invalid header → 401/400 as per existing behavior).
+- Obtain `tenantId` from `c.get('tenantId')` — MUST NOT read the header directly in the handler.
+- Invoke `routeContact` with the path parameter `id`.
+- Map `Result<ContactLead, ContactRoutingError>` to HTTP responses per the table below.
+
+| `ContactRoutingError` code | HTTP status | Response body |
+|----------------------------|-------------|---------------|
+| `CONTACT_NOT_FOUND` | `404` | `{ "error": "CONTACT_NOT_FOUND" }` |
+| `MISSING_FULL_NAME` | `422` | `{ "error": "MISSING_FULL_NAME" }` |
+| `DB_ERROR` | `500` | `{ "error": "INTERNAL_ERROR" }` |
+
+Success (including idempotent no-op): HTTP `200` with body `{ "routed": <ContactLead> }`.
+
+The route MUST be declared before `/:id` in the router file so it is not shadowed by the dynamic segment.
+
+#### Scenario: route valid contact → 200 with ContactLead body
+
+- GIVEN a tenant with a valid named contact (not yet routed)
+- AND a valid `X-Tenant-Id` header is set
+- WHEN `POST /contacts/:id/route` is called
+- THEN the response status is `200`
+- AND the body is `{ "routed": <ContactLead> }` where `routed.source` is `'whatsapp'`, `routed.external_id` equals the contact id, and `routed.captured_at` is an ISO 8601 string
+- AND `contacts.routed_at` is set in the DB
+- AND one outbox row exists with status `'pending'`
+
+#### Scenario: route contact with null full_name → 422
+
+- GIVEN a tenant with a contact whose `full_name` is null
+- WHEN `POST /contacts/:id/route` is called
+- THEN the response status is `422`
+- AND the body is `{ "error": "MISSING_FULL_NAME" }`
+- AND `contacts.routed_at` remains `null`
+- AND no outbox row is inserted
+
+#### Scenario: route non-existent or soft-deleted contact → 404
+
+- GIVEN no active contact exists for the given id under the current tenant
+- WHEN `POST /contacts/:id/route` is called
+- THEN the response status is `404`
+- AND the body is `{ "error": "CONTACT_NOT_FOUND" }`
+
+#### Scenario: route already-routed contact → 200 no-op
+
+- GIVEN a contact that was previously routed (`routed_at` non-null, one outbox row exists)
+- WHEN `POST /contacts/:id/route` is called again
+- THEN the response status is `200`
+- AND the body is `{ "routed": <ContactLead> }`
+- AND `contact_lead_outbox` still has exactly ONE row for this contact (no duplicate)
+- AND `contacts.routed_at` is unchanged
+
+---
+
+### Requirement: Outbox Tenant Isolation
+
+Outbox rows written under tenant A MUST NOT be visible to tenant B. RLS on `contact_lead_outbox` enforces this with no `WHERE tenant_id` in application queries.
+
+#### Scenario: tenant A outbox row invisible to tenant B
+
+- GIVEN tenant A routes a contact successfully (one outbox row written)
+- WHEN the DB is queried as `app_rls` with `SET LOCAL app.current_tenant = '<tenant_B_id>'`
+- AND `SELECT * FROM contact_lead_outbox` is executed
+- THEN zero rows are returned for tenant B
+- AND the row is visible when queried under tenant A's context
+
+---
+
+### Requirement: Outbox Payload Schema Conformance
+
+Every `payload` value inserted into `contact_lead_outbox` MUST be a valid `ContactLead` as defined by `contactLeadSchema` (Zod). Validation MUST occur at write time, before the INSERT. An invalid payload MUST result in `err({ code: 'DB_ERROR' })` — no invalid payload MUST ever be persisted.
+
+#### Scenario: persisted outbox payload validates against contactLeadSchema
+
+- GIVEN a contact has been successfully routed
+- WHEN the outbox row's `payload` is retrieved and parsed with `contactLeadSchema.safeParse`
+- THEN `parseResult.success` is `true`
+- AND `parseResult.data.source` is `'whatsapp'`
+- AND `parseResult.data.external_id` equals the contact's `id`
+- AND `parseResult.data.captured_at` is a valid ISO 8601 string
+
+---
+
+## Out of Scope (Non-Requirements for This Slice: contactlead-routing)
+
+- Worker/drain process — the outbox accumulates rows; no consumer exists in this slice.
+- Re-routing (explicit re-emit) — a future `re-route` action if ever needed.
+- Outbox TTL, monitoring, or cleanup.
+- CRM HTTP call or any cross-service I/O.
+- Auto-routing triggered by intent changes.
+- `WHERE tenant_id` in any query (RLS only, always).

@@ -1,0 +1,325 @@
+<!--
+  DESIGN REFERENCE — imported VERBATIM from Claude Design.
+  Project: "WhatsApp Inbound Console" (claude.ai/design/p/c946acee-cd4c-4cb2-99cd-373963e08a52)
+  Owner: Horelt Silva · Imported: 2026-06-24
+
+  VISUAL SOURCE OF TRUTH for the whatsapp-inbound-test-ui change.
+  This is a Claude Design `.dc.html` artifact: an <x-dc> template + a
+  <script type="text/x-dc"> Component class whose logic is MOCKED
+  (setTimeout fake backend, random genWamid, fake poll).
+
+  Implementation in apps/web must reproduce LAYOUT + STATES + COPY + BOTH THEMES,
+  but wire behavior to the REAL backend (dev signing proxy + GET /whatsapp-messages).
+  Do NOT ship support.js / dc-runtime (Claude Design preview harness only).
+  Port markup/styles to the project stack (Next.js 15 + Tailwind/shadcn), preserving the look.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  :root{
+    color-scheme:light;
+    --app-bg:#f7f7f8;--header-bg:#fff;--card-bg:#fff;--card-border:#e4e4e7;--inner-bg:#f4f4f5;--subtle-bg:#fcfcfd;--divider:#f0f0f1;--input-bg:#fff;--input-border:#e4e4e7;
+    --fg:#18181b;--fg2:#3f3f46;--muted:#71717a;--faint:#a1a1aa;
+    --green:#25D366;--green-hover:#1eb858;--green-send:#34c46f;--green-sent:#16a34a;--on-green:#fff;
+    --bubble-bg:#d9fdd3;--bubble-border:#bbf0b0;--bubble-text:#111b21;--bubble-time:#9ca3af;--check:#53bdeb;
+    --ok-bg:#ecfdf3;--ok-text:#067647;--ok-border:#abefc6;
+    --danger:#dc2626;--danger-bg:#fef2f2;--danger-border:#fecaca;--danger-text:#b42318;
+    --warn-bg:#fffbeb;--warn-border:#fde68a;--warn-text:#92400e;--warn-icon:#d97706;--warn-code-bg:#fef3c7;--warn-input-border:#fbbf24;
+    --dot-on:#16a34a;--dot-off:#dc2626;
+    --chip-bg:#f4f4f5;--chip-border:#e4e4e7;--chip-text:#52525b;--avatar-bg:#e7f9ee;--avatar-text:#0f7a43;
+    --skel-a:#ececee;--skel-b:#f6f6f7;--hover:#fafafa;--toggle-off:#d4d4d8;--placeholder:#a1a1aa;
+  }
+  [data-theme="kanagawa"]{
+    color-scheme:dark;
+    --app-bg:#16161D;--header-bg:#1F1F28;--card-bg:#1F1F28;--card-border:#2A2A37;--inner-bg:#181820;--subtle-bg:#1a1a22;--divider:#2A2A37;--input-bg:#16161D;--input-border:#363646;
+    --fg:#DCD7BA;--fg2:#C8C093;--muted:#8a8779;--faint:#6f6e66;
+    --green:#98BB6C;--green-hover:#a8c97c;--green-send:#87a85d;--green-sent:#98BB6C;--on-green:#1F1F28;
+    --bubble-bg:#2B3328;--bubble-border:#3f4d36;--bubble-text:#DCD7BA;--bubble-time:#8a8779;--check:#7FB4CA;
+    --ok-bg:#2B3328;--ok-text:#98BB6C;--ok-border:#4d5e42;
+    --danger:#C34043;--danger-bg:#43242B;--danger-border:#6e3a40;--danger-text:#E46876;
+    --warn-bg:#39342a;--warn-border:#5c5340;--warn-text:#E6C384;--warn-icon:#FF9E3B;--warn-code-bg:#4a4332;--warn-input-border:#C0A36E;
+    --dot-on:#98BB6C;--dot-off:#FF5D62;
+    --chip-bg:#2A2A37;--chip-border:#363646;--chip-text:#C8C093;--avatar-bg:#2B3328;--avatar-text:#98BB6C;
+    --skel-a:#24242f;--skel-b:#2f2f3d;--hover:#2A2A37;--toggle-off:#363646;--placeholder:#6f6e66;
+  }
+  input::placeholder{color:var(--placeholder);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes cardIn{0%{opacity:0;transform:translateY(-8px);box-shadow:0 0 0 2px var(--green);}60%{opacity:1;transform:none;box-shadow:0 0 0 2px var(--green);}100%{transform:none;box-shadow:0 0 0 0 rgba(0,0,0,0);}}
+  @keyframes bubbleIn{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}
+  @keyframes shimmer{0%{background-position:-450px 0;}100%{background-position:450px 0;}}
+  @keyframes ping{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--dot-on) 55%,transparent);}70%{box-shadow:0 0 0 5px rgba(0,0,0,0);}100%{box-shadow:0 0 0 0 rgba(0,0,0,0);}}
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-thumb{background:var(--toggle-off);border-radius:8px;border:2px solid transparent;background-clip:content-box;}
+</style>
+</helmet>
+<div data-theme="{{ theme }}" style="display:flex;flex-direction:column;height:100vh;background:var(--app-bg);color:var(--fg);font-family:'Geist','Geist Fallback',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;transition:background-color .25s,color .25s;">
+
+  <header style="flex:0 0 auto;height:56px;display:flex;align-items:center;gap:14px;padding:0 18px;background:var(--header-bg);border-bottom:1px solid var(--card-border);transition:background-color .25s,border-color .25s;">
+    <div style="display:flex;align-items:center;gap:11px;min-width:0;">
+      <div style="flex:0 0 auto;width:30px;height:30px;border-radius:8px;background:var(--green);display:flex;align-items:center;justify-content:center;">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--on-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+      </div>
+      <div style="display:flex;flex-direction:column;line-height:1.15;min-width:0;">
+        <span style="font-size:13.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;">WhatsApp Inbound <span style="color:var(--faint);font-weight:400;">·</span> Consola de prueba</span>
+        <span style="font-size:11px;color:var(--faint);white-space:nowrap;">Herramienta interna de verificación</span>
+      </div>
+      <span style="flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:6px;text-transform:uppercase;margin-left:4px;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        Solo dev
+      </span>
+    </div>
+
+    <div style="flex:1;"></div>
+
+    <button onClick="{{ onToggleTheme }}" title="Cambiar tema (Claro / Kanagawa)" style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;cursor:pointer;color:var(--fg2);" style-hover="background:var(--hover);">
+      <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </sc-if>
+      <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"></path></svg>
+      </sc-if>
+    </button>
+
+    <button onClick="{{ onToggleConn }}" title="Click para simular sin conexión / reconectar" style="display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;color:var(--fg2);" style-hover="background:var(--hover);">
+      <span style="width:8px;height:8px;border-radius:50%;background:{{ dotColor }};animation:{{ dotAnim }};"></span>
+      {{ connLabel }}
+    </button>
+
+    <div style="display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 11px;background:var(--subtle-bg);border:1px solid var(--card-border);border-radius:8px;font-size:12.5px;color:var(--fg2);cursor:default;" title="Tenant actual — el negocio que recibe el mensaje">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path><path d="M9 9v.01"></path><path d="M9 12v.01"></path><path d="M9 15v.01"></path><path d="M9 18v.01"></path></svg>
+      <span style="font-weight:500;color:var(--fg);">{{ tenant }}</span>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:-1px;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+    </div>
+  </header>
+
+  <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:9px 18px;background:var(--danger-bg);border-bottom:1px solid var(--danger-border);color:var(--danger-text);font-size:12.5px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+      <span><strong style="font-weight:600;">Sin conexión con el backend.</strong> No se pudo alcanzar el servidor — verificá que esté corriendo y que CORS permita este origen. Los envíos están deshabilitados.</span>
+      <div style="flex:1;"></div>
+      <button onClick="{{ onToggleConn }}" style="flex:0 0 auto;height:26px;padding:0 11px;background:var(--card-bg);border:1px solid var(--danger-border);border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;color:var(--danger-text);cursor:pointer;" style-hover="background:var(--danger-bg);">Reintentar</button>
+    </div>
+  </sc-if>
+
+  <main style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(380px,1fr) minmax(440px,1.18fr);gap:18px;padding:18px;">
+
+    <!-- ============ LEFT: Simulador de cliente ============ -->
+    <section style="display:flex;flex-direction:column;min-height:0;background:var(--card-bg);border:1px solid var(--card-border);border-radius:12px;overflow:hidden;transition:background-color .25s,border-color .25s;">
+      <div style="flex:0 0 auto;padding:14px 16px;border-bottom:1px solid var(--divider);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"></path><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"></path></svg>
+          <h2 style="margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em;">Simulador de cliente</h2>
+        </div>
+        <p style="margin:4px 0 0 24px;font-size:12px;color:var(--muted);">Enviá mensajes como si fueras un cliente de WhatsApp.</p>
+      </div>
+
+      <div style="flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 16px;border-bottom:1px solid var(--divider);background:var(--subtle-bg);">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label style="font-size:12px;font-weight:500;color:var(--fg2);display:flex;align-items:center;gap:5px;">Número del cliente
+            <span style="font-size:10.5px;font-weight:600;color:var(--muted);background:var(--chip-bg);border:1px solid var(--chip-border);padding:0 5px;border-radius:5px;">E.164 · Perú</span>
+          </label>
+          <input value="{{ clientPhone }}" onChange="{{ onPhone }}" placeholder="+51 9XX XXX XXX" spellcheck="false" style="height:36px;width:100%;border:1px solid {{ phoneBorder }};border-radius:8px;padding:0 11px;font-size:13px;font-family:'Geist Mono',ui-monospace,monospace;letter-spacing:.01em;color:var(--fg);background:var(--input-bg);outline:none;" style-focus="box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 22%,transparent);" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label style="font-size:12px;font-weight:500;color:var(--fg2);">Nombre del perfil <span style="color:var(--faint);font-weight:400;">(opcional)</span></label>
+          <input value="{{ profileName }}" onChange="{{ onName }}" placeholder="Juan Pérez" style="height:36px;width:100%;border:1px solid var(--input-border);border-radius:8px;padding:0 11px;font-size:13px;font-family:inherit;color:var(--fg);background:var(--input-bg);outline:none;" style-focus="box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 22%,transparent);border-color:var(--green);" />
+        </div>
+        <div style="grid-column:1 / -1;display:flex;align-items:center;gap:6px;font-size:11.5px;color:{{ hintColor }};">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          {{ hintText }}
+        </div>
+      </div>
+
+      <!-- chat zone -->
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:16px;background:var(--inner-bg);display:flex;flex-direction:column;gap:8px;">
+        <sc-if value="{{ sessionEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="margin:auto;text-align:center;color:var(--faint);font-size:12.5px;max-width:220px;">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:8px;opacity:.7;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <div>Sin mensajes en esta sesión.<br>Escribí abajo y tocá enviar.</div>
+          </div>
+        </sc-if>
+        <sc-for list="{{ session }}" as="msg" hint-placeholder-count="0">
+          <div style="align-self:flex-end;max-width:78%;animation:bubbleIn .28s ease both;">
+            <div style="background:{{ msg.bubble }};border:1px solid {{ msg.bubbleBorder }};border-radius:12px 12px 4px 12px;padding:7px 11px 5px;font-size:13.5px;line-height:1.45;color:{{ msg.textColor }};white-space:pre-wrap;word-break:break-word;">{{ msg.text }}</div>
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:3px;padding-right:2px;">
+              <span style="font-size:10.5px;color:var(--bubble-time);">{{ msg.time }}</span>
+              <span style="display:inline-flex;">{{ msg.statusIcon }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- warning before send -->
+      <sc-if value="{{ phoneWarn }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:0 0 auto;display:flex;align-items:flex-start;gap:9px;padding:9px 14px;background:var(--warn-bg);border-top:1px solid var(--warn-border);color:var(--warn-text);font-size:11.5px;line-height:1.4;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:1px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          <span><strong style="font-weight:600;">Número no peruano.</strong> <code style="font-family:'Geist Mono',monospace;font-size:11px;background:var(--warn-code-bg);padding:0 3px;border-radius:3px;">normalizePhoneE164</code> lo rechaza en silencio — este mensaje <strong style="font-weight:600;">no se persistirá</strong> en el Hub.</span>
+        </div>
+      </sc-if>
+
+      <!-- composer -->
+      <div style="flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:12px;border-top:1px solid var(--divider);background:var(--card-bg);">
+        <input value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onKey }}" disabled="{{ offline }}" placeholder="{{ composerPlaceholder }}" style="flex:1;height:38px;border:1px solid var(--input-border);border-radius:9px;padding:0 13px;font-size:13.5px;font-family:inherit;color:var(--fg);background:{{ composerBg }};outline:none;" style-focus="box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 22%,transparent);border-color:var(--green);" />
+        <sc-if value="{{ canSend }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ onSend }}" style="display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 15px;border:none;border-radius:9px;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--on-green);background:var(--green);cursor:pointer;white-space:nowrap;" style-hover="background:var(--green-hover);">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--on-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            Enviar mensaje
+          </button>
+        </sc-if>
+        <sc-if value="{{ cantSend }}" hint-placeholder-val="{{ false }}">
+          <button disabled style="display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 15px;border:none;border-radius:9px;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--faint);background:var(--chip-bg);cursor:not-allowed;white-space:nowrap;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            Enviar mensaje
+          </button>
+        </sc-if>
+        <sc-if value="{{ sendingNow }}" hint-placeholder-val="{{ false }}">
+          <button disabled style="display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 15px;border:none;border-radius:9px;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--on-green);background:var(--green-send);cursor:default;white-space:nowrap;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--on-green)" stroke-width="2.2" stroke-linecap="round" style="animation:spin .8s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+            Enviando…
+          </button>
+        </sc-if>
+        <sc-if value="{{ sentNow }}" hint-placeholder-val="{{ false }}">
+          <button disabled style="display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 15px;border:none;border-radius:9px;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--on-green);background:var(--green-sent);cursor:default;white-space:nowrap;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--on-green)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            Enviado
+          </button>
+        </sc-if>
+      </div>
+    </section>
+
+    <!-- ============ RIGHT: Recibido por el Hub ============ -->
+    <section style="display:flex;flex-direction:column;min-height:0;background:var(--card-bg);border:1px solid var(--card-border);border-radius:12px;overflow:hidden;transition:background-color .25s,border-color .25s;">
+      <div style="flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--divider);">
+        <div style="min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+            <h2 style="margin:0;font-size:14px;font-weight:600;letter-spacing:-.01em;">Recibido por el Hub</h2>
+            <span style="font-size:11px;font-weight:600;color:var(--chip-text);background:var(--chip-bg);border:1px solid var(--chip-border);padding:1px 7px;border-radius:20px;">{{ hubCount }}</span>
+          </div>
+          <p style="margin:4px 0 0 24px;font-size:12px;color:var(--muted);">Mensajes persistidos · la verdad de la base de datos.</p>
+        </div>
+        <div style="flex:1;"></div>
+        <button onClick="{{ onToggleAuto }}" title="Auto-actualizar por polling" style="display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 9px 0 11px;background:{{ autoBg }};border:1px solid {{ autoBorder }};border-radius:8px;font-family:inherit;font-size:12px;font-weight:500;color:{{ autoText }};cursor:pointer;white-space:nowrap;">
+          Auto
+          <span style="width:28px;height:16px;border-radius:20px;background:{{ autoTrack }};position:relative;transition:background .15s;flex:0 0 auto;">
+            <span style="position:absolute;top:2px;left:{{ autoKnobLeft }};width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s;"></span>
+          </span>
+        </button>
+        <button onClick="{{ onRefresh }}" title="Refrescar (polling)" style="display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;cursor:pointer;color:var(--fg2);" style-hover="background:var(--hover);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:{{ refreshAnim }};"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        </button>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:14px;background:var(--subtle-bg);display:flex;flex-direction:column;gap:10px;">
+
+        <sc-if value="{{ notPersisted }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:0 0 auto;display:flex;align-items:flex-start;gap:8px;padding:9px 12px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:9px;color:var(--warn-text);font-size:12px;line-height:1.4;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn-icon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:1px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span>El último envío <strong style="font-weight:600;">no se persistió</strong> — el número no es peruano válido y fue rechazado por <code style="font-family:'Geist Mono',monospace;font-size:11px;">normalizePhoneE164</code>.</span>
+          </div>
+        </sc-if>
+
+        <!-- loading skeletons -->
+        <sc-if value="{{ hubLoading }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ skel }}" as="s" hint-placeholder-count="3">
+            <div style="flex:0 0 auto;background:var(--card-bg);border:1px solid var(--card-border);border-radius:11px;padding:13px;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px;">
+                <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(90deg,var(--skel-a) 0,var(--skel-b) 50%,var(--skel-a) 100%);background-size:450px 100%;animation:shimmer 1.4s infinite linear;"></div>
+                <div style="height:11px;width:38%;border-radius:5px;background:linear-gradient(90deg,var(--skel-a) 0,var(--skel-b) 50%,var(--skel-a) 100%);background-size:450px 100%;animation:shimmer 1.4s infinite linear;"></div>
+                <div style="flex:1;"></div>
+                <div style="height:18px;width:70px;border-radius:20px;background:linear-gradient(90deg,var(--skel-a) 0,var(--skel-b) 50%,var(--skel-a) 100%);background-size:450px 100%;animation:shimmer 1.4s infinite linear;"></div>
+              </div>
+              <div style="height:10px;width:90%;border-radius:5px;margin-bottom:7px;background:linear-gradient(90deg,var(--skel-a) 0,var(--skel-b) 50%,var(--skel-a) 100%);background-size:450px 100%;animation:shimmer 1.4s infinite linear;"></div>
+              <div style="height:10px;width:60%;border-radius:5px;background:linear-gradient(90deg,var(--skel-a) 0,var(--skel-b) 50%,var(--skel-a) 100%);background-size:450px 100%;animation:shimmer 1.4s infinite linear;"></div>
+            </div>
+          </sc-for>
+        </sc-if>
+
+        <!-- empty state -->
+        <sc-if value="{{ hubEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="margin:auto;text-align:center;padding:30px 20px;max-width:280px;">
+            <div style="width:64px;height:64px;margin:0 auto 14px;border-radius:16px;background:var(--chip-bg);border:1px solid var(--chip-border);display:flex;align-items:center;justify-content:center;">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+            </div>
+            <h3 style="margin:0 0 5px;font-size:14px;font-weight:600;color:var(--fg2);">Todavía no llegó ningún mensaje</h3>
+            <p style="margin:0;font-size:12.5px;color:var(--faint);line-height:1.5;">Enviá uno desde la izquierda. Cuando el Hub lo persista, aparecerá acá.</p>
+          </div>
+        </sc-if>
+
+        <!-- messages -->
+        <sc-if value="{{ hubHasItems }}" hint-placeholder-val="{{ false }}">
+          <sc-for list="{{ hub }}" as="card" hint-placeholder-count="0">
+            <div style="flex:0 0 auto;background:var(--card-bg);border:1px solid var(--card-border);border-radius:11px;padding:13px;animation:cardIn .9s ease both;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
+                <div style="flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:var(--avatar-bg);color:var(--avatar-text);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;">{{ card.initials }}</div>
+                <div style="min-width:0;">
+                  <div style="font-size:13.5px;font-weight:600;color:var(--fg);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ card.name }}</div>
+                  <div style="font-size:11.5px;font-family:'Geist Mono',ui-monospace,monospace;color:var(--muted);line-height:1.3;">{{ card.phone }}</div>
+                </div>
+                <div style="flex:1;"></div>
+                <span style="flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;background:var(--ok-bg);color:var(--ok-text);border:1px solid var(--ok-border);font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--ok-text)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  Persistido
+                </span>
+              </div>
+              <div style="font-size:13.5px;line-height:1.5;color:var(--fg);white-space:pre-wrap;word-break:break-word;margin-bottom:11px;">{{ card.text }}</div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:9px;border-top:1px solid var(--divider);">
+                <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;color:var(--chip-text);background:var(--chip-bg);border:1px solid var(--chip-border);padding:1px 7px;border-radius:5px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"></path><path d="M9 20h6"></path><path d="M12 4v16"></path></svg>
+                  {{ card.type }}
+                </span>
+                <span title="{{ card.wamid }}" style="display:inline-flex;align-items:center;gap:4px;max-width:170px;font-size:11px;font-family:'Geist Mono',ui-monospace,monospace;color:var(--faint);cursor:help;overflow:hidden;">
+                  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ card.wamid }}</span>
+                </span>
+                <div style="flex:1;"></div>
+                <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--faint);white-space:nowrap;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  {{ card.receivedAt }}
+                </span>
+              </div>
+            </div>
+          </sc-for>
+        </sc-if>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+
+<!--
+  ===== MOCKED COMPONENT LOGIC (reference only — reproduce behavior against the REAL backend) =====
+  Props: theme ('light'|'kanagawa'), startConnected (bool), prefillNonPeru (bool).
+
+  Key behavior to reproduce in apps/web:
+  - norm(p): strip spaces, dashes, parens, dots from the phone.
+  - isPeru(): /^\+519\d{8}$/ on the normalized number  → drives the warning + whether
+    the message is expected to persist. (Mirror of backend normalizePhoneE164; the REAL
+    source of truth is the backend — the UI hint is advisory.)
+  - send(): blocks if offline / not idle / empty draft. Optimistically appends a chat
+    bubble (green if Peru, warn-colored if not), sets button idle→sending→sent→idle,
+    then polls the Hub. (REAL: POST signed payload to the webhook, then poll GET messages.)
+  - poll(newMsg): sets hubLoading, then either prepends a persisted card OR shows the
+    "not persisted" banner for ~4s. (REAL: GET /whatsapp-messages, render returned rows.)
+  - genWamid(): random 'wamid.HBgL…' id per send. (REAL: backend persists the real wamid;
+    UI must generate a UNIQUE wamid per simulated send or ON CONFLICT DO NOTHING no-ops it.)
+  - toggleAuto(): 5s setInterval polling. toggleConn()/toggleTheme(): UI toggles.
+  - initialsOf(name): first letters of first two words, uppercased; '#' if empty.
+  - fmtTime(d): HH:mm.
+
+  Full original mocked script is preserved in the Claude Design project file.
+-->
+</body>
+</html>
