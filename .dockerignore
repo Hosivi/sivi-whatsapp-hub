@@ -31,10 +31,13 @@ logs/
 npm-debug.log*
 pnpm-debug.log*
 
-# Env files — never bake secrets into the image
-.env
-.env.local
-.env.*.local
+# Env files — never bake secrets into the image. Blanket-exclude every .env*
+# variant (root and nested, e.g. apps/web/.env.local.example's siblings), but
+# keep the checked-in, secret-free .env.example templates via negation.
+.env*
+**/.env*
+!.env.example
+!**/.env.example
 
 # VCS / editor / OS
 .git/
