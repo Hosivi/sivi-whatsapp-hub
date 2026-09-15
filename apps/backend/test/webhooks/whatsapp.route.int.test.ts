@@ -49,6 +49,8 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_VERIFY_TOKEN: VERIFY_TOKEN,
     WHATSAPP_APP_SECRET: APP_SECRET,
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
+    SIVIHUB_LINK_ENCRYPTION_KEY: 'a'.repeat(64),
+    DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
     WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,

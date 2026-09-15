@@ -21,6 +21,7 @@ import { upsertContactTx } from '../contacts/contacts.repository.js';
 import { normalizePhoneE164 } from '../contacts/phone-e164.js';
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
+import { enqueueSivihubEvent } from '../sivihub-link/sivihub-outbox.repository.js';
 import type { WhatsappWebhookError } from './whatsapp.errors.js';
 
 // ---------------------------------------------------------------------------
@@ -229,7 +230,10 @@ export const handleInboundMessage = async (
         ...(message.text ? { text: message.text } : {}),
       };
 
-      await tx.execute(
+      // RETURNING id distinguishes a genuine insert from a no-op on a duplicate
+      // wamid — the sivihub_event_outbox enqueue below MUST fire only for the
+      // former (spec: "sólo si el mensaje entró").
+      const insertResult = await tx.execute(
         rawSql`
           INSERT INTO whatsapp_messages
             (tenant_id, wamid, phone_number_id, contact_id, from_phone_e164,
@@ -245,8 +249,27 @@ export const handleInboundMessage = async (
              ${JSON.stringify(rawPayload)}::jsonb,
              ${receivedAt.toISOString()}::timestamptz)
           ON CONFLICT (wamid) DO NOTHING
+          RETURNING id
         `,
       );
+      const wasInserted = (insertResult as unknown as Array<{ id: string }>).length > 0;
+
+      // SiviHub Link (ADR-0048 corte 1, B2): enqueue in the SAME transaction, only
+      // when the message row was actually inserted AND the tenant has an active
+      // link (enqueueSivihubEvent itself no-ops without one).
+      if (wasInserted) {
+        await enqueueSivihubEvent(tx, tenantId, {
+          type: 'message.received',
+          providerMessageId: message.id,
+          direction: 'inbound',
+          author: 'contact',
+          contactExternalId: fromPhoneE164,
+          contactName: firstEntry?.changes[0]?.value?.contacts?.[0]?.profile?.name ?? null,
+          body: message.text?.body ?? null,
+          mediaRef: null,
+          sentAt: receivedAt,
+        });
+      }
 
       return { wamid: message.id, contactId: contact.id };
     });

@@ -5,8 +5,11 @@
  *   1. loadEnv() — validate configuration, fail-fast on misconfig
  *   2. createDbClient(env) — open the app_rls (non-superuser) pool + privileged admin handle
  *   3. buildApp({ db, env }) — mount health + contacts CRUD behind the tenant middleware
- *   4. Start @hono/node-server on env.PORT
- *   5. Register SIGTERM/SIGINT for graceful shutdown (closes DB pools)
+ *   4. createOutboxDrainDb + createSivihubOutboxDrainLoop — start the Hub -> SiviHub
+ *      outbox drain loop IN THIS SAME PROCESS (ADR-0048 corte 1, spec item 6)
+ *   5. Start @hono/node-server on env.PORT
+ *   6. Register SIGTERM/SIGINT for graceful shutdown: stop the drain loop FIRST
+ *      (awaits any in-flight batch), then close both DB connections
  *
  * Migrations are NOT run here — use the dedicated `pnpm migrate` script
  * (src/db/migrate.ts) before serving so RLS + the app_rls role reach the database.
@@ -22,6 +25,9 @@ import { loadEnv } from './config/env.js';
 import { createDbClient } from './db/client.js';
 import { createDialog360Client } from './meta/dialog360-client.js';
 import { createFakeMetaClient, createMetaClient } from './meta/meta-client.js';
+import { createSivihubLinkSecretCipher } from './sivihub-link/sivihub-link-secret-cipher.js';
+import { createOutboxDrainDb } from './sivihub-link/sivihub-outbox-drain-client.js';
+import { createSivihubOutboxDrainLoop } from './sivihub-link/sivihub-outbox-drain.js';
 
 const env = loadEnv();
 
@@ -57,6 +63,18 @@ const llm = env.ENABLE_DEV_ENDPOINTS
 
 const app = buildApp({ db, env, meta, llm, logger });
 
+// SiviHub Link outbox drain (ADR-0048 corte 1, B3) — its own least-privilege,
+// cross-tenant connection (app_outbox_drain), never db.adminSql. See the module
+// doc in sivihub-outbox-drain-client.ts for why.
+const outboxDrainDb = createOutboxDrainDb(env);
+const sivihubLinkCipher = createSivihubLinkSecretCipher(env.SIVIHUB_LINK_ENCRYPTION_KEY);
+const outboxDrain = createSivihubOutboxDrainLoop({
+  drainDb: outboxDrainDb.db,
+  cipher: sivihubLinkCipher,
+  logger,
+});
+outboxDrain.start();
+
 serve(
   {
     fetch: app.fetch,
@@ -69,7 +87,12 @@ serve(
 
 const shutdown = (signal: string): void => {
   logger.info(`[main] received ${signal} — shutting down`);
-  void db.close().finally(() => process.exit(0));
+  // Stop the drain loop FIRST (awaits any in-flight batch) so a delivery attempt
+  // is never interrupted mid-transaction, THEN close both DB connections.
+  void outboxDrain
+    .stop()
+    .then(() => Promise.all([db.close(), outboxDrainDb.close()]))
+    .finally(() => process.exit(0));
 };
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

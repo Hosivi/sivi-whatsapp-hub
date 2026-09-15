@@ -67,6 +67,8 @@ describe('DbClient.resolveTenant', () => {
       DATABASE_URL: appRlsConnectionString,
       DATABASE_ADMIN_URL: adminConnectionString,
       DATABASE_WEBHOOK_URL: appWebhookConnectionString,
+      SIVIHUB_LINK_ENCRYPTION_KEY: 'a'.repeat(64),
+      DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:testpassword@localhost:5432/unused',
       AUTH_MODE: 'dev-header',
       PORT: 3001,
       LOG_LEVEL: 'silent',

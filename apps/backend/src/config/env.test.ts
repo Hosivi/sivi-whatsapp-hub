@@ -15,6 +15,8 @@ const VALID_ENV = {
   WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
   WHATSAPP_APP_SECRET: 'test-app-secret',
   DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/hub',
+  SIVIHUB_LINK_ENCRYPTION_KEY: 'a'.repeat(64),
+  DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:testpassword@localhost:5432/hub',
 };
 
 /** Remove a key from process.env without using delete (Biome noDelete rule). */
@@ -156,5 +158,36 @@ describe('loadEnv()', () => {
     process.env.ENABLE_DEV_ENDPOINTS = '0';
     const env = loadEnv();
     expect(env.ENABLE_DEV_ENDPOINTS).toBe(false);
+  });
+
+  it('throws when SIVIHUB_LINK_ENCRYPTION_KEY is missing', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('SIVIHUB_LINK_ENCRYPTION_KEY');
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('throws when SIVIHUB_LINK_ENCRYPTION_KEY is not 64 hex chars', () => {
+    Object.assign(process.env, VALID_ENV);
+    process.env.SIVIHUB_LINK_ENCRYPTION_KEY = 'not-hex';
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('accepts a valid 64-hex-char SIVIHUB_LINK_ENCRYPTION_KEY', () => {
+    Object.assign(process.env, VALID_ENV);
+    const env = loadEnv();
+    expect(env.SIVIHUB_LINK_ENCRYPTION_KEY).toBe(VALID_ENV.SIVIHUB_LINK_ENCRYPTION_KEY);
+  });
+
+  it('throws when DATABASE_OUTBOX_URL is missing', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('DATABASE_OUTBOX_URL');
+    expect(() => loadEnv()).toThrow();
+  });
+
+  it('APP_OUTBOX_DRAIN_PASSWORD is optional — does not throw when absent', () => {
+    Object.assign(process.env, VALID_ENV);
+    unsetEnv('APP_OUTBOX_DRAIN_PASSWORD');
+    const env = loadEnv();
+    expect(env.APP_OUTBOX_DRAIN_PASSWORD).toBeUndefined();
   });
 });

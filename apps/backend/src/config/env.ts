@@ -46,6 +46,16 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   // LLM model to use for AI replies. Defaults to gemini-2.5-flash (Gemini provider).
   AI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+  // SiviHub Link (ADR-0048 corte 1) — 32-byte hex key for AES-256-GCM encryption of
+  // sivihub_links.secret_encrypted. MUST be 64 hex chars (32 bytes). Never logged.
+  SIVIHUB_LINK_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'must be 32 bytes hex-encoded (64 hex chars)'),
+  // Low-privilege, cross-tenant DB connection for the outbox drain loop (app_outbox_drain
+  // role — mirrors DATABASE_WEBHOOK_URL/app_webhook). Never used by repositories.
+  DATABASE_OUTBOX_URL: z.string().min(1),
+  // Optional: prod password for the app_outbox_drain role (mirrors APP_WEBHOOK_PASSWORD).
+  APP_OUTBOX_DRAIN_PASSWORD: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

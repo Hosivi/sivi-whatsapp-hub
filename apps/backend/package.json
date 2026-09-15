@@ -12,7 +12,8 @@
     "dev:local": "tsx watch dev-local.mjs",
     "start": "node --env-file-if-exists=../../.env --env-file-if-exists=.env dist/main.js",
     "migrate": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/migrate.ts",
-    "seed:dev": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/seed-dev.ts"
+    "seed:dev": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/db/seed-dev.ts",
+    "sivihub:link": "tsx --env-file-if-exists=../../.env --env-file-if-exists=.env src/sivihub-link/sivihub-link.cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

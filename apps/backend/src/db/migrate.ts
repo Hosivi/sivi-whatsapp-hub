@@ -42,6 +42,8 @@ const MIGRATION_FILES = [
   '0002_whatsapp.sql',
   '0003_outbound.sql',
   '0004_tenant_ai_config.sql',
+  '0006_sivihub_links.sql',
+  '0007_sivihub_event_outbox.sql',
 ] as const;
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 
@@ -54,6 +56,9 @@ const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
  *   the app_webhook role in 0002_whatsapp.sql. The 3rd param is OPTIONAL so that
  *   existing 2-arg callers (migrate.int.test.ts:35, migrate.routing.int.test.ts:44,117)
  *   continue to compile and run unchanged — they do not connect as app_webhook.
+ * appOutboxDrainPassword — optional; defaults to 'app_outbox_drain'. Mirrors
+ *   appWebhookPassword's rewrite, but for the app_outbox_drain role in
+ *   0007_sivihub_event_outbox.sql (must match DATABASE_OUTBOX_URL's credentials).
  *
  * A replacement FUNCTION is required for the app_rls branch: a replacement STRING
  * would treat `$$` dollar-quote delimiters as `$`-escapes and corrupt the DO block.
@@ -62,9 +67,11 @@ export function makeIdempotent(
   sql: string,
   appRlsPassword: string,
   appWebhookPassword = 'app_webhook', // optional default — keeps existing 2-arg callers compiling
+  appOutboxDrainPassword = 'app_outbox_drain', // optional default — keeps existing callers compiling
 ): string {
   const safeRls = appRlsPassword.replace(/'/g, "''");
   const safeWh = appWebhookPassword.replace(/'/g, "''");
+  const safeDrain = appOutboxDrainPassword.replace(/'/g, "''");
 
   // Rewrite app_rls CREATE ROLE line → idempotent DO block.
   let out = sql.replace(
@@ -91,6 +98,18 @@ $$;`,
       `ALTER ROLE app_webhook LOGIN PASSWORD '${safeWh}'`,
     );
 
+  // Rewrite app_outbox_drain CREATE + ALTER password literals in
+  // 0007_sivihub_event_outbox.sql — mirrors the app_webhook rewrite above.
+  out = out
+    .replace(
+      /CREATE ROLE app_outbox_drain LOGIN PASSWORD '[^']*'/,
+      `CREATE ROLE app_outbox_drain LOGIN PASSWORD '${safeDrain}'`,
+    )
+    .replace(
+      /ALTER ROLE app_outbox_drain LOGIN PASSWORD '[^']*'/,
+      `ALTER ROLE app_outbox_drain LOGIN PASSWORD '${safeDrain}'`,
+    );
+
   return out;
 }
 
@@ -107,15 +126,24 @@ export async function runMigration(env: Env): Promise<void> {
   // app_webhook role password — sourced from APP_WEBHOOK_PASSWORD (mirrors APP_RLS_PASSWORD).
   // Default 'app_webhook' matches the in-SQL literal for local/test environments.
   const appWebhookPassword = process.env.APP_WEBHOOK_PASSWORD ?? 'app_webhook';
+  // app_outbox_drain role password — sourced from APP_OUTBOX_DRAIN_PASSWORD.
+  // Default 'app_outbox_drain' matches the in-SQL literal for local/test environments.
+  const appOutboxDrainPassword = process.env.APP_OUTBOX_DRAIN_PASSWORD ?? 'app_outbox_drain';
   const adminSql = postgres(env.DATABASE_ADMIN_URL, { max: 1 });
 
   try {
     for (const file of MIGRATION_FILES) {
       const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf-8');
-      // makeIdempotent rewrites the bare `CREATE ROLE app_rls` line (0000 only)
-      // and the app_webhook CREATE/ALTER password literals (0002 only).
+      // makeIdempotent rewrites the bare `CREATE ROLE app_rls` line (0000 only),
+      // the app_webhook CREATE/ALTER password literals (0002 only), and the
+      // app_outbox_drain CREATE/ALTER password literals (0007 only).
       // For files that lack these lines it is a no-op (regexes find nothing).
-      const idempotent = makeIdempotent(raw, appRlsPassword, appWebhookPassword);
+      const idempotent = makeIdempotent(
+        raw,
+        appRlsPassword,
+        appWebhookPassword,
+        appOutboxDrainPassword,
+      );
       await adminSql.unsafe(idempotent);
       console.info(`[migrate] applied ${file}`);
     }
