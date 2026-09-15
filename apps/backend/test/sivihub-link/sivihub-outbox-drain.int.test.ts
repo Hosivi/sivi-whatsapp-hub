@@ -18,6 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createSivihubLinkSecretCipher } from '../../src/sivihub-link/sivihub-link-secret-cipher.js';
 import { storeOrReplaceActiveLink } from '../../src/sivihub-link/sivihub-links.repository.js';
 import {
+  claimOutboxBatch,
   createSivihubOutboxDrainLoop,
   drainOnce,
 } from '../../src/sivihub-link/sivihub-outbox-drain.js';
@@ -356,6 +357,118 @@ describe('sivihub outbox drain (B3)', () => {
     } finally {
       await receiver.close();
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Claim -> deliver -> record: no transaction held across the HTTP call
+  // -------------------------------------------------------------------------
+
+  /**
+   * Tries to take `FOR UPDATE NOWAIT` on the given outbox row from a SEPARATE
+   * (admin) connection. Resolves `true` when the lock is free (no other
+   * transaction holds it), `false` when it's held (lock_not_available, 55P03).
+   */
+  async function canLockRowNoWait(id: string): Promise<boolean> {
+    try {
+      await db.adminSql.begin(async (tx) => {
+        await tx`SELECT id FROM sivihub_event_outbox WHERE id = ${id}::uuid FOR UPDATE NOWAIT`;
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  describe('claim -> deliver -> record (no long-held transaction)', () => {
+    it('holds no open transaction on the row while delivery (HTTP) is in flight', async () => {
+      let capturedOutboxId: string | undefined;
+      let lockWasFreeDuringDelivery: boolean | undefined;
+
+      const receiver = createFakeReceiver(RAW_SECRET, async () => {
+        if (capturedOutboxId !== undefined) {
+          lockWasFreeDuringDelivery = await canLockRowNoWait(capturedOutboxId);
+        }
+        return { status: 200 };
+      });
+      const url = await receiver.listen();
+      try {
+        const { outboxId } = await seedLinkAndEvent(url);
+        capturedOutboxId = outboxId;
+
+        await drainOnce({ drainDb, cipher });
+
+        // The CLAIM transaction already committed before the HTTP call started —
+        // a second connection can take a NOWAIT lock on the same row while the
+        // fake receiver is "handling" the request.
+        expect(lockWasFreeDuringDelivery).toBe(true);
+
+        const row = await fetchRow(outboxId);
+        expect(row?.status).toBe('delivered');
+      } finally {
+        await receiver.close();
+      }
+    });
+
+    it('a claimed-but-unrecorded row (crash between claim and record) becomes claimable again once its lease expires', async () => {
+      const receiver = createFakeReceiver(RAW_SECRET, () => ({ status: 200 }));
+      const url = await receiver.listen();
+      try {
+        const { outboxId } = await seedLinkAndEvent(url);
+
+        // Simulate a crash: run ONLY the claim step (commits, leases the row into
+        // the future) and never deliver/record — the process died in between.
+        const claimed = await claimOutboxBatch(drainDb, 25);
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0]?.id).toBe(outboxId);
+        expect(receiver.requests).toHaveLength(0);
+
+        // Still leased -> not due yet -> a fresh tick must not re-claim it.
+        const stillLeased = await drainOnce({ drainDb, cipher });
+        expect(stillLeased.processed).toBe(0);
+        expect(receiver.requests).toHaveLength(0);
+        const leasedRow = await fetchRow(outboxId);
+        expect(leasedRow?.status).toBe('pending');
+
+        // Fast-forward past the lease window (equivalent to CLAIM_LEASE_SECONDS
+        // elapsing) instead of waiting for it in real time.
+        await db.adminSql`UPDATE sivihub_event_outbox SET next_attempt_at = now() - interval '1 second' WHERE id = ${outboxId}::uuid`;
+
+        const afterLease = await drainOnce({ drainDb, cipher });
+        expect(afterLease.processed).toBe(1);
+
+        const row = await fetchRow(outboxId);
+        expect(row?.status).toBe('delivered');
+        // Delivered exactly once for real — the receiver only ever saw ONE
+        // actual HTTP attempt (the crash never sent one).
+        expect(receiver.requests).toHaveLength(1);
+      } finally {
+        await receiver.close();
+      }
+    });
+
+    it('two concurrent drain ticks never deliver the same row twice within the lease window', async () => {
+      const receiver = createFakeReceiver(RAW_SECRET, () => ({ status: 200, delayMs: 30 }));
+      const url = await receiver.listen();
+      try {
+        const { outboxId } = await seedLinkAndEvent(url);
+
+        const [resultA, resultB] = await Promise.all([
+          drainOnce({ drainDb, cipher }),
+          drainOnce({ drainDb, cipher }),
+        ]);
+
+        // SKIP LOCKED means exactly one tick claims the row — the other sees an
+        // empty batch, never a duplicate claim.
+        expect(resultA.processed + resultB.processed).toBe(1);
+        expect(receiver.requests).toHaveLength(1);
+
+        const row = await fetchRow(outboxId);
+        expect(row?.status).toBe('delivered');
+        expect(row?.attempts).toBe(1);
+      } finally {
+        await receiver.close();
+      }
+    });
   });
 
   // -------------------------------------------------------------------------

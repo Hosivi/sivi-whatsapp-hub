@@ -3,19 +3,28 @@
  * (ADR-0048 corte 1, walking skeleton B3).
  *
  * Runs IN THE SAME PROCESS as the API (spec item 6): an interval loop that, each
- * tick, opens one transaction on the app_outbox_drain connection (least-privilege,
- * cross-tenant — see 0007_sivihub_event_outbox.sql), SELECTs a batch of due rows
- * with `FOR UPDATE ... SKIP LOCKED` (safe if this ever runs with >1 worker), and for
- * each row: decrypts the channel secret, re-signs the SAME stored payload bytes with
- * a FRESH timestamp (spec item 7 — the body never changes across retries, only the
- * signature), POSTs it with a bounded delivery timeout, and classifies the response
- * per the contract's response table (see classifyDeliveryOutcome).
+ * tick, runs three separate steps — CLAIM, DELIVER, RECORD — instead of one long
+ * transaction, so no DB transaction (and no pooled connection) is ever held open
+ * across an HTTP call:
  *
- * Held DB locks: the batch's row locks are held for the WHOLE batch's delivery time
- * (worst case batchSize * deliveryTimeoutMs). Acceptable here because this is a
- * single in-process loop — no concurrent drain worker exists to contend with, and
- * SKIP LOCKED means a future second worker would simply take the next batch instead
- * of blocking.
+ *   1. CLAIM (claimOutboxBatch): one short transaction on the app_outbox_drain
+ *      connection (least-privilege, cross-tenant — see 0007_sivihub_event_outbox.sql)
+ *      that SELECTs up to `batchSize` due rows with `FOR UPDATE SKIP LOCKED`, LEASES
+ *      them by pushing next_attempt_at CLAIM_LEASE_SECONDS into the future, and
+ *      commits immediately. No HTTP, no external I/O — just DB round-trips.
+ *   2. DELIVER (processOne, outside any transaction): for each claimed row, decrypts
+ *      the channel secret, re-signs the SAME stored payload bytes with a FRESH
+ *      timestamp (spec item 7 — the body never changes across retries, only the
+ *      signature), and POSTs it with a bounded delivery timeout.
+ *   3. RECORD (markTerminalOrRetry, outside any transaction): one short UPDATE per
+ *      row, guarded by `AND status = 'pending'` so a late/duplicate write never
+ *      clobbers a terminal state another worker already recorded.
+ *
+ * If the process crashes between CLAIM and RECORD, the row simply becomes claimable
+ * again once its lease (CLAIM_LEASE_SECONDS) elapses — safe because SiviHub's
+ * receiver is idempotent (re-delivery of the same event is a no-op on their side).
+ * SKIP LOCKED + the lease together mean two concurrent drain ticks never deliver the
+ * same row twice within the lease window.
  */
 
 import { sql as rawSql } from 'drizzle-orm';
@@ -112,13 +121,63 @@ const DEFAULT_BATCH_SIZE = 25;
 const DEFAULT_DELIVERY_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
+/**
+ * How long a CLAIM lease holds a row before it becomes claimable again. Must
+ * comfortably exceed the worst case of one full batch's sequential delivery time
+ * (DEFAULT_BATCH_SIZE * DEFAULT_DELIVERY_TIMEOUT_MS = 25 * 10s = 250s) so a batch
+ * that is still legitimately in flight never has its lease expire out from under
+ * it — that would let a second tick re-claim and re-deliver a row the first tick
+ * hasn't finished with yet. If the process crashes between CLAIM and RECORD
+ * instead, the row becomes claimable again once this lease elapses; safe because
+ * SiviHub's receiver is idempotent.
+ */
+export const CLAIM_LEASE_SECONDS = 300; // 5 minutes
+
 // ---------------------------------------------------------------------------
-// One batch
+// CLAIM — short transaction, no HTTP
 // ---------------------------------------------------------------------------
 
 /**
- * Runs exactly one batch: selects up to `batchSize` due rows FOR UPDATE SKIP LOCKED
- * and processes each one to a terminal or retry state, all inside one transaction.
+ * Leases up to `batchSize` due rows in one short transaction (SELECT ... FOR UPDATE
+ * SKIP LOCKED + an UPDATE that pushes next_attempt_at CLAIM_LEASE_SECONDS into the
+ * future) and commits immediately — no HTTP, no external I/O held inside it.
+ *
+ * Exported so tests can exercise CLAIM in isolation (e.g. to simulate a crash
+ * between claim and record); production code only calls it via drainOnce.
+ */
+export async function claimOutboxBatch(
+  drainDb: PostgresJsDatabase,
+  batchSize: number,
+): Promise<OutboxDrainRow[]> {
+  const claimed = await drainDb.transaction(async (tx) => {
+    return tx.execute(rawSql`
+      WITH claimed AS (
+        SELECT o.id
+        FROM sivihub_event_outbox o
+        WHERE o.status = 'pending' AND o.next_attempt_at <= now()
+        ORDER BY o.next_attempt_at
+        LIMIT ${batchSize}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE sivihub_event_outbox o
+      SET next_attempt_at = now() + (${CLAIM_LEASE_SECONDS}::text || ' seconds')::interval
+      FROM claimed c, sivihub_links l
+      WHERE o.id = c.id AND l.id = o.link_id
+      RETURNING o.id, o.tenant_id, o.link_id, o.event_id, o.type, o.payload, o.attempts,
+                l.events_url, l.secret_encrypted
+    `);
+  });
+  return claimed as unknown as OutboxDrainRow[];
+}
+
+// ---------------------------------------------------------------------------
+// One batch: CLAIM, then DELIVER + RECORD per row (outside any transaction)
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs exactly one batch: CLAIMs up to `batchSize` due rows (one short transaction),
+ * then DELIVERs and RECORDs each one — never holding a transaction open across the
+ * HTTP delivery call.
  */
 export async function drainOnce(deps: SivihubOutboxDrainDeps): Promise<{ processed: number }> {
   const now = deps.clock ?? (() => new Date());
@@ -126,38 +185,29 @@ export async function drainOnce(deps: SivihubOutboxDrainDeps): Promise<{ process
   const batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
   const deliveryTimeoutMs = deps.deliveryTimeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS;
 
-  let processed = 0;
+  const rows = await claimOutboxBatch(deps.drainDb, batchSize);
 
-  await deps.drainDb.transaction(async (tx) => {
-    const selected = await tx.execute(rawSql`
-      SELECT o.id, o.tenant_id, o.link_id, o.event_id, o.type, o.payload, o.attempts,
-             l.events_url, l.secret_encrypted
-      FROM sivihub_event_outbox o
-      JOIN sivihub_links l ON l.id = o.link_id
-      WHERE o.status = 'pending' AND o.next_attempt_at <= now()
-      ORDER BY o.next_attempt_at
-      LIMIT ${batchSize}
-      FOR UPDATE OF o SKIP LOCKED
-    `);
-    const rows = selected as unknown as OutboxDrainRow[];
-    processed = rows.length;
+  for (const row of rows) {
+    await processOne(deps.drainDb, row, {
+      cipher: deps.cipher,
+      fetchImpl,
+      deliveryTimeoutMs,
+      now,
+      ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+    });
+  }
 
-    for (const row of rows) {
-      await processOne(tx, row, {
-        cipher: deps.cipher,
-        fetchImpl,
-        deliveryTimeoutMs,
-        now,
-        ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
-      });
-    }
-  });
-
-  return { processed };
+  return { processed: rows.length };
 }
 
+/**
+ * RECORD step — one short UPDATE, no explicit transaction (a single statement is
+ * already atomic). Guarded by `AND status = 'pending'` so a write that arrives after
+ * the row's lease expired and another worker already recorded a terminal outcome
+ * never clobbers it.
+ */
 async function markTerminalOrRetry(
-  tx: PostgresJsDatabase,
+  drainDb: PostgresJsDatabase,
   row: OutboxDrainRow,
   outcome: DeliveryOutcome,
   nextAttemptNumber: number,
@@ -165,38 +215,39 @@ async function markTerminalOrRetry(
   lastError: string | null,
 ): Promise<void> {
   if (outcome === 'delivered') {
-    await tx.execute(rawSql`
+    await drainDb.execute(rawSql`
       UPDATE sivihub_event_outbox
       SET status = 'delivered', delivered_at = now(), attempts = ${nextAttemptNumber},
           last_status = ${lastStatus}, last_error = NULL
-      WHERE id = ${row.id}::uuid
+      WHERE id = ${row.id}::uuid AND status = 'pending'
     `);
     return;
   }
 
   if (outcome === 'dead' || nextAttemptNumber >= MAX_ATTEMPTS) {
-    await tx.execute(rawSql`
+    await drainDb.execute(rawSql`
       UPDATE sivihub_event_outbox
       SET status = 'dead', attempts = ${nextAttemptNumber},
           last_status = ${lastStatus}, last_error = ${lastError}
-      WHERE id = ${row.id}::uuid
+      WHERE id = ${row.id}::uuid AND status = 'pending'
     `);
     return;
   }
 
   // retry: exponential backoff, still 'pending' so the next tick can pick it up.
   const backoffSeconds = computeBackoffSeconds(nextAttemptNumber);
-  await tx.execute(rawSql`
+  await drainDb.execute(rawSql`
     UPDATE sivihub_event_outbox
     SET status = 'pending', attempts = ${nextAttemptNumber},
         next_attempt_at = now() + (${backoffSeconds}::text || ' seconds')::interval,
         last_status = ${lastStatus}, last_error = ${lastError}
-    WHERE id = ${row.id}::uuid
+    WHERE id = ${row.id}::uuid AND status = 'pending'
   `);
 }
 
+/** DELIVER step (outside any transaction) + calls RECORD when done. */
 async function processOne(
-  tx: PostgresJsDatabase,
+  drainDb: PostgresJsDatabase,
   row: OutboxDrainRow,
   ctx: {
     cipher: SivihubLinkSecretCipher;
@@ -216,7 +267,7 @@ async function processOne(
       'sivihub_outbox_decrypt_failed',
     );
     await markTerminalOrRetry(
-      tx,
+      drainDb,
       row,
       'dead',
       nextAttemptNumber,
@@ -270,7 +321,7 @@ async function processOne(
     'sivihub_outbox_delivery_attempt',
   );
 
-  await markTerminalOrRetry(tx, row, outcome, nextAttemptNumber, lastStatus, lastError);
+  await markTerminalOrRetry(drainDb, row, outcome, nextAttemptNumber, lastStatus, lastError);
 }
 
 // ---------------------------------------------------------------------------
