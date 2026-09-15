@@ -1,0 +1,56 @@
+# .dockerignore — keep the build context Linux-clean.
+#
+# CRITICAL: node_modules is excluded so the Dockerfile's `COPY . .` in the build
+# stage never overwrites the container's freshly `pnpm install`-ed (Linux-native)
+# node_modules with whatever was installed on the HOST (Windows/macOS) — that
+# would silently ship broken native binaries (esbuild, etc.) inside the image.
+
+# Dependencies (installed fresh inside the image)
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build outputs (rebuilt inside the image)
+dist/
+**/dist/
+.next/
+**/.next/
+out/
+build/
+
+# Turbo / test / coverage
+.turbo/
+**/.turbo/
+coverage/
+**/coverage/
+*.lcov
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Env files — never bake secrets into the image
+.env
+.env.local
+.env.*.local
+
+# VCS / editor / OS
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Project tooling not needed at build/runtime
+.claude/
+.codegraph/
+openspec/
+Docs/
+README.md
+*.md
+
+# TypeScript incremental build info
+*.tsbuildinfo
