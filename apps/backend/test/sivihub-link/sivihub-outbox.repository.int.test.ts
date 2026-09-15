@@ -135,4 +135,23 @@ describe('enqueueSivihubEvent (migration 0007 + repository)', () => {
       /permission denied/i,
     );
   });
+
+  it('app_outbox_drain gets permission denied on SELECT from whatsapp_messages, contacts, and whatsapp_accounts', async () => {
+    // app_outbox_drain (0007) is scoped to exactly two tables — sivihub_event_outbox
+    // (SELECT + UPDATE) and sivihub_links (SELECT) — via its own FOR ALL/FOR SELECT
+    // policies. It must NEVER be able to read any other domain table.
+    const postgres = (await import('postgres')).default;
+    const drainSql = postgres(db.outboxDrainConnectionString, { max: 1 });
+    try {
+      await expect(drainSql`SELECT * FROM whatsapp_messages LIMIT 1`).rejects.toThrow(
+        /permission denied/i,
+      );
+      await expect(drainSql`SELECT * FROM contacts LIMIT 1`).rejects.toThrow(/permission denied/i);
+      await expect(drainSql`SELECT * FROM whatsapp_accounts LIMIT 1`).rejects.toThrow(
+        /permission denied/i,
+      );
+    } finally {
+      await drainSql.end();
+    }
+  });
 });
