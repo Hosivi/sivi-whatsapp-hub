@@ -21,6 +21,8 @@ function makeEnv(overrides?: Partial<Env>): Env {
     DATABASE_URL: 'postgresql://unused:unused@localhost:5432/unused',
     DATABASE_ADMIN_URL: 'postgresql://unused:unused@localhost:5432/unused',
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
+    SIVIHUB_LINK_ENCRYPTION_KEY: 'a'.repeat(64),
+    DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:testpassword@localhost:5432/unused',
     AUTH_MODE: 'dev-header',
     PORT: 3001,
     LOG_LEVEL: 'silent',

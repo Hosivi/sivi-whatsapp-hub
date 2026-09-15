@@ -17,6 +17,8 @@ const DEV_ENV = {
   DATABASE_URL: 'postgresql://app_rls:devpassword@localhost:5434/sivi_whatsapp_hub',
   DATABASE_ADMIN_URL: 'postgresql://postgres:devpassword@localhost:5434/sivi_whatsapp_hub',
   DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:devpassword@localhost:5434/sivi_whatsapp_hub',
+  DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:devpassword@localhost:5434/sivi_whatsapp_hub',
+  SIVIHUB_LINK_ENCRYPTION_KEY: '0'.repeat(64),
   AUTH_MODE: 'dev-header',
   PORT: '3002',
   LOG_LEVEL: 'info',
@@ -24,6 +26,7 @@ const DEV_ENV = {
   WHATSAPP_APP_SECRET: 'local-dev-app-secret',
   APP_RLS_PASSWORD: 'devpassword',
   APP_WEBHOOK_PASSWORD: 'devpassword',
+  APP_OUTBOX_DRAIN_PASSWORD: 'devpassword',
   ENABLE_DEV_ENDPOINTS: 'true',
 };
 

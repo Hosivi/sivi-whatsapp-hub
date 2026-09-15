@@ -22,6 +22,8 @@ const DEV_HEADER_ENV: Env = {
   WHATSAPP_VERIFY_TOKEN: 'test-verify-token',
   WHATSAPP_APP_SECRET: 'test-app-secret',
   DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost/hub',
+  SIVIHUB_LINK_ENCRYPTION_KEY: 'a'.repeat(64),
+  DATABASE_OUTBOX_URL: 'postgresql://app_outbox_drain:testpassword@localhost:5432/unused',
   ENABLE_DEV_ENDPOINTS: false,
   WHATSAPP_META_API_VERSION: 'v21.0',
   AI_MODEL: 'gemini-2.5-flash',
