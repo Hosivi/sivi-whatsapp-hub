@@ -191,6 +191,7 @@ export async function runAiReply(
         const sendResult = await sendWhatsappText(deps, tenantId, {
           to: fromPhoneE164,
           text: replyText,
+          author: 'ai',
         });
 
         if (!sendResult.ok) {

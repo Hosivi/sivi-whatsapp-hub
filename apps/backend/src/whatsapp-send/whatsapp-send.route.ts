@@ -55,7 +55,9 @@ export const createWhatsappSendRoute = (
     }
 
     const tenantId = c.get('tenantId');
-    const result = await sendWhatsappText(deps, tenantId, parsed.data);
+    // This route is always a HUMAN operator sending manually — author is never
+    // taken from the request body (spec: "el envío manual... pasa 'agent'").
+    const result = await sendWhatsappText(deps, tenantId, { ...parsed.data, author: 'agent' });
 
     if (!result.ok) {
       const status = sendErrorToHttpStatus(result.error);

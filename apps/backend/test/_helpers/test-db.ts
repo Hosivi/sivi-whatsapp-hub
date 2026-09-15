@@ -64,6 +64,7 @@ const MIGRATION_FILES = [
   '0003_outbound.sql',
   '0004_tenant_ai_config.sql',
   '0006_sivihub_links.sql',
+  '0007_sivihub_event_outbox.sql',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,13 @@ export type TestDb = {
   readonly adminSql: postgres.Sql;
   /** Raw app_rls connection string (for direct-client tests). */
   readonly appRlsConnectionString: string;
+  /**
+   * Raw app_outbox_drain connection string — the low-privilege, cross-tenant role the
+   * B3 outbox drain loop connects as. Tests build their own drizzle handle from this
+   * (mirrors createOutboxDrainDb in src) so drain tests exercise the SAME role/policy
+   * the real drain runs under, never testDb.adminSql.
+   */
+  readonly outboxDrainConnectionString: string;
   /**
    * Resolves tenant_id from phone_number_id using the app_webhook connection (low-priv).
    * Satisfies the DbClient.resolveTenant contract so TestDb can be passed to buildApp().
@@ -144,6 +152,7 @@ export async function createTestDb(): Promise<TestDb> {
   const { hostname, port, pathname } = new URL(adminConnectionString);
   const appRlsConnectionString = `postgresql://app_rls:testpassword@${hostname}:${port}${pathname}`;
   const appWebhookConnectionString = `postgresql://app_webhook:testpassword@${hostname}:${port}${pathname}`;
+  const outboxDrainConnectionString = `postgresql://app_outbox_drain:testpassword@${hostname}:${port}${pathname}`;
 
   // 5. Create app_rls-scoped postgres.js connection + Drizzle wrapper
   const appRlsSql = postgres(appRlsConnectionString, { max: 5 });
@@ -168,6 +177,7 @@ export async function createTestDb(): Promise<TestDb> {
     adminQuery,
     adminSql,
     appRlsConnectionString,
+    outboxDrainConnectionString,
 
     async seedTenant(tenantId, data) {
       // Insert directly via admin connection (bypasses RLS) so we can seed both tenants.
@@ -245,7 +255,7 @@ export async function createTestDb(): Promise<TestDb> {
     async truncate() {
       // Truncate all domain tables via admin (superuser) bypasses RLS.
       // Order: whatsapp_messages first (FK → contacts), then whatsapp_accounts, outbox, contacts.
-      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, tenant_ai_config, contacts, sivihub_links RESTART IDENTITY CASCADE`;
+      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, tenant_ai_config, contacts, sivihub_links, sivihub_event_outbox RESTART IDENTITY CASCADE`;
     },
 
     async teardown() {

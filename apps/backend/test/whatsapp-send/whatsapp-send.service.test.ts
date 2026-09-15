@@ -92,7 +92,7 @@ function makeDeps(
 }
 
 const TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const SEND_INPUT = { to: '+51987654321', text: 'Hola' };
+const SEND_INPUT = { to: '+51987654321', text: 'Hola', author: 'agent' as const };
 // Canonical Peru E.164 that '+987654321' (no country code) normalizes to.
 const NORMALIZED_RECIPIENT = '+51987654321';
 
@@ -209,7 +209,7 @@ describe('sendWhatsappText: Meta invocation', () => {
     // The value sent to Meta MUST be the normalized one, not the raw input.
     const meta = createFakeMetaClient();
     const deps = makeDeps([{ phone_number_id: 'pnid-1', access_token: 'tok-abc' }], meta);
-    await sendWhatsappText(deps, TENANT_ID, { to: '+987654321', text: 'Hola' });
+    await sendWhatsappText(deps, TENANT_ID, { to: '+987654321', text: 'Hola', author: 'agent' });
     expect(meta.calls).toHaveLength(1);
     expect(meta.calls[0]?.to).toBe(NORMALIZED_RECIPIENT);
     expect(meta.calls[0]?.to).not.toBe('+987654321');
@@ -350,7 +350,11 @@ describe('sendWhatsappText: success path', () => {
       meta,
     };
 
-    const result = await sendWhatsappText(deps, TENANT_ID, { to: RAW_TO, text: SEND_INPUT.text });
+    const result = await sendWhatsappText(deps, TENANT_ID, {
+      to: RAW_TO,
+      text: SEND_INPUT.text,
+      author: 'agent',
+    });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.wamid).toBe('wamid-fake-1');

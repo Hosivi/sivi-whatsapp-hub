@@ -24,6 +24,7 @@ import { normalizePhoneE164 } from '../contacts/phone-e164.js';
 import type { TenantRunner } from '../db/client.js';
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
+import { enqueueSivihubEvent } from '../sivihub-link/sivihub-outbox.repository.js';
 import { mapMetaError } from './whatsapp-send.errors.js';
 import type { WhatsappSendError } from './whatsapp-send.errors.js';
 
@@ -34,6 +35,14 @@ import type { WhatsappSendError } from './whatsapp-send.errors.js';
 export type SendInput = {
   readonly to: string;
   readonly text: string;
+  /**
+   * Who sent it — the manual /whatsapp-send route always passes 'agent'; the AI
+   * auto-reply orchestrator (ai-reply.service.ts) always passes 'ai'. Both funnel
+   * through this ONE service (spec: "el envío manual y la autorespuesta pasan por
+   * el mismo sendWhatsappText"), and this is the field that tells them apart in
+   * the sivihub_event_outbox payload's data.author.
+   */
+  readonly author: 'agent' | 'ai';
 };
 
 export type SendOk = {
@@ -138,7 +147,13 @@ export const sendWhatsappText = async (
       if (!contact.ok) {
         throw new Error(`upsertContactTx failed: ${contact.error.code}`);
       }
-      await tx.execute(rawSql`
+      // Computed once in JS (not a bare `now()` in SQL) so the SAME instant is both
+      // the persisted received_at AND the sivihub_event_outbox event's sent_at
+      // (spec item 4: "sent_at del evento = la columna guardada").
+      const sentAt = new Date();
+      // RETURNING id distinguishes a genuine insert from a no-op on a duplicate
+      // wamid — the enqueue below MUST fire only for the former.
+      const insertResult = await tx.execute(rawSql`
         INSERT INTO whatsapp_messages
           (tenant_id, wamid, phone_number_id, contact_id, from_phone_e164,
            message_type, text_body, raw_payload, received_at, direction)
@@ -151,10 +166,27 @@ export const sendWhatsappText = async (
            'text',
            ${input.text},
            ${JSON.stringify({ wamid, status })}::jsonb,
-           now(),
+           ${sentAt.toISOString()}::timestamptz,
            'outbound')
         ON CONFLICT (wamid) DO NOTHING
+        RETURNING id
       `);
+      const wasInserted = (insertResult as unknown as Array<{ id: string }>).length > 0;
+
+      // SiviHub Link (ADR-0048 corte 1, B2): enqueue in the SAME transaction.
+      if (wasInserted) {
+        await enqueueSivihubEvent(tx, tenantId, {
+          type: 'message.sent',
+          providerMessageId: wamid,
+          direction: 'outbound',
+          author: input.author,
+          contactExternalId: recipientPhoneE164,
+          contactName: contact.value.fullName,
+          body: input.text,
+          mediaRef: null,
+          sentAt,
+        });
+      }
     });
   } catch (cause) {
     // Send already happened — surface DB_ERROR; never roll back the send.
