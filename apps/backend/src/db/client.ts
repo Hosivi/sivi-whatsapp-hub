@@ -22,6 +22,8 @@
 import { and, eq } from 'drizzle-orm';
 import { sql as rawSql } from 'drizzle-orm';
 import { type PostgresJsDatabase, drizzle } from 'drizzle-orm/postgres-js';
+import type { Logger } from 'pino';
+import pino from 'pino';
 import postgres from 'postgres';
 import type { Env } from '../config/env.js';
 import { err, ok } from '../shared/result.js';
@@ -88,7 +90,14 @@ export type DbClient = {
 // Factory
 // ---------------------------------------------------------------------------
 
-export const createDbClient = (env: Env): DbClient => {
+export const createDbClient = (
+  env: Env,
+  // Defaults to a standalone error-level pino instance for callers that don't
+  // thread one in (e.g. the sivihub:link CLI) — main.ts passes its own
+  // configured logger so infrastructure failures land in the same sink as
+  // everything else.
+  logger: Logger = pino({ level: 'error' }),
+): DbClient => {
   // App runtime connection: non-superuser role (app_rls). RLS is enforced here.
   const sql = postgres(env.DATABASE_URL, { max: 10 });
   const db = drizzle(sql);
@@ -176,7 +185,22 @@ export const createDbClient = (env: Env): DbClient => {
         return err({ code: 'UNKNOWN_LINK' });
       }
       return ok({ id: row.id, tenantId: row.tenantId, secretEncrypted: row.secretEncrypted });
-    } catch {
+    } catch (cause) {
+      // An infrastructure failure (Postgres down, connection refused, a
+      // malformed linkId tripping the uuid cast, ...) must NOT be silently
+      // indistinguishable from "everything is unauthorized" — the caller
+      // still gets the SAME 401 via the identical UNKNOWN_LINK code, but the
+      // operator needs to see this. NEVER log the secret (never read here
+      // anyway), the message body (never seen here either), the raw error
+      // message (may echo the offending value back), or the full link id —
+      // only a short, non-identifying prefix for correlation.
+      logger.error(
+        {
+          linkIdPrefix: linkId.slice(0, 8),
+          causeType: cause instanceof Error ? cause.name : typeof cause,
+        },
+        'resolveSivihubLink: infrastructure failure resolving a SiviHub link',
+      );
       return err({ code: 'UNKNOWN_LINK' });
     }
   };

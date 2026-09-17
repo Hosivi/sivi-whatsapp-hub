@@ -17,9 +17,11 @@
  */
 
 import { Hono } from 'hono';
+import type { Logger } from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AppDeps } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
+import { createDbClient } from '../../src/db/client.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import type { SivihubInboundVariables } from '../../src/sivihub-inbound/sivihub-inbound-auth.middleware.js';
 import { createSivihubInboundAuthMiddleware } from '../../src/sivihub-inbound/sivihub-inbound-auth.middleware.js';
@@ -245,4 +247,70 @@ describe('SiviHub inbound auth (S1) — standalone middleware', () => {
     const body = await res.json();
     expect(body).toEqual({ error: 'unauthorized' });
   });
+});
+
+// ---------------------------------------------------------------------------
+// Infrastructure failure — a DB outage must be logged, not silently
+// indistinguishable from "everything is unauthorized" (ADR-0048 corte 4
+// correction). Uses a REAL createDbClient (not the Testcontainers-backed
+// TestDb mirror) pointed at a connection that is refused immediately — no
+// container needed to simulate "Postgres is down".
+// ---------------------------------------------------------------------------
+
+describe('SiviHub inbound auth (S1) — database outage (real createDbClient, no Testcontainers)', () => {
+  it('a thrown DB error while resolving the link is logged at error level (no secret/full link id/message body) and the request still gets 401', async () => {
+    const logCalls: unknown[][] = [];
+    const fakeLogger = {
+      error: (...args: unknown[]) => {
+        logCalls.push(args);
+      },
+    } as unknown as Logger;
+
+    const outageEnv = makeEnv({
+      // No listener on this port — connection is refused immediately, which
+      // simulates "Postgres is down" without stopping a real container mid-test.
+      DATABASE_WEBHOOK_URL: 'postgresql://baduser:badpass@127.0.0.1:1/nonexistent',
+    });
+
+    const db = createDbClient(outageEnv, fakeLogger);
+    const cipher = createSivihubLinkSecretCipher('c'.repeat(64));
+    const deps = {
+      db,
+      env: outageEnv,
+      meta: createFakeMetaClient(),
+      sivihubLinkCipher: cipher,
+    } as unknown as AppDeps;
+
+    const app = new Hono<{ Variables: SivihubInboundVariables }>();
+    app.use('*', createSivihubInboundAuthMiddleware(deps));
+    app.post('/', (c) => c.json({ tenantId: c.get('tenantId') }, 200));
+
+    // Syntactically valid UUID (passes S1's Zod check) — its existence is
+    // never actually resolved because the DB call throws first.
+    const linkId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    const rawBody = JSON.stringify({ to: '+51987654321', text: 'a private customer message' });
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    try {
+      const res = await app.request('/', {
+        method: 'POST',
+        headers: signedHeaders(linkId, SECRET_A_HEX, rawBody, nowSeconds),
+        body: rawBody,
+      });
+
+      // Same 401 as any other auth failure — the caller learns nothing.
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body).toEqual({ error: 'unauthorized' });
+
+      // But the OPERATOR must see it: an outage must not be silent.
+      expect(logCalls.length).toBeGreaterThanOrEqual(1);
+      const loggedText = JSON.stringify(logCalls);
+      expect(loggedText).not.toContain(linkId);
+      expect(loggedText).not.toContain('a private customer message');
+      expect(loggedText.toLowerCase()).not.toContain(SECRET_A_HEX.toLowerCase());
+    } finally {
+      await db.close();
+    }
+  }, 15000);
 });

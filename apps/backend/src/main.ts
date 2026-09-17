@@ -41,7 +41,7 @@ if (env.WHATSAPP_PROVIDER === 'dialog360' && !env.DIALOG360_BASE_URL) {
   );
 }
 
-const db = createDbClient(env);
+const db = createDbClient(env, logger);
 
 // Provider selection:
 //   dialog360 → 360dialog adapter (opt-in via env; works in dev so the sandbox is reachable)
