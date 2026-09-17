@@ -29,6 +29,11 @@
  * Always when deps present:
  *   GET    /whatsapp-messages → 200 { data: MessageDTO[] } (tenant middleware)
  *   POST   /whatsapp-send     → 200 { wamid, status } (tenant middleware)
+ *   POST   /sivihub/messages  → 200 { wamid, sentAt } (per-link rate limit,
+ *                                THEN S1 SiviHub service-auth middleware — NOT
+ *                                the tenant middleware; tenant is resolved
+ *                                from the link, never the request; over the
+ *                                rate limit → 429 with Retry-After)
  *
  * Functional composition — no DI container, no classes, no decorators.
  */
@@ -43,6 +48,8 @@ import { createHealthRoute } from './core/health/health.route.js';
 import type { DbClient } from './db/client.js';
 import { createDevRoute } from './dev/webhook-sign.route.js';
 import type { MetaClient } from './meta/meta-client.js';
+import { createSivihubMessagesRoute } from './sivihub-inbound/sivihub-messages.route.js';
+import type { SivihubLinkSecretCipher } from './sivihub-link/sivihub-link-secret-cipher.js';
 import { createWhatsappWebhookRoute } from './webhooks/whatsapp.route.js';
 import { createWhatsappMessagesRoute } from './whatsapp-messages/whatsapp-messages.route.js';
 import { createWhatsappSendRoute } from './whatsapp-send/whatsapp-send.route.js';
@@ -55,6 +62,12 @@ export type AppDeps = {
   readonly llm: LlmAdapter;
   /** Pino logger instance threaded from main.ts so the AI orchestrator can audit. */
   readonly logger: Logger;
+  /**
+   * Decrypts sivihub_links.secret_encrypted — needed by the S1 inbound auth
+   * middleware to verify a SiviHub-originated request's signature (ADR-0048
+   * corte 4). The SAME instance main.ts threads into the outbox drain loop.
+   */
+  readonly sivihubLinkCipher: SivihubLinkSecretCipher;
 };
 
 /**
@@ -102,6 +115,9 @@ export function buildApp(deps?: AppDeps): Hono {
     app.route('/whatsapp-messages', createWhatsappMessagesRoute(deps));
     // Outbound send — tenant middleware on POST / (X-Tenant-Id header).
     app.route('/whatsapp-send', createWhatsappSendRoute(deps));
+    // SiviHub-originated reply — S1's service-auth middleware resolves the
+    // tenant from the link, NOT the tenant middleware (no X-Tenant-Id here).
+    app.route('/sivihub/messages', createSivihubMessagesRoute(deps));
   }
 
   return app;

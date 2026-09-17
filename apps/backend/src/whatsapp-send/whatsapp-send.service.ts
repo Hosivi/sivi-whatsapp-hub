@@ -48,6 +48,14 @@ export type SendInput = {
 export type SendOk = {
   readonly wamid: string;
   readonly status: string;
+  /**
+   * The SAME instant persisted as whatsapp_messages.received_at for this row
+   * (ADR-0048 corte 4 decision 2). Callers that echo a timestamp back to the
+   * sender (e.g. the SiviHub reply route) MUST use THIS value — never a fresh
+   * `new Date()` read — so the value they store matches the row exactly and a
+   * later message.sent event collides on it instead of duplicating.
+   */
+  readonly sentAt: Date;
 };
 
 // ---------------------------------------------------------------------------
@@ -137,6 +145,13 @@ export const sendWhatsappText = async (
   if (!sendResult.ok) return err(mapMetaError(sendResult.error));
   const { wamid, status } = sendResult.value;
 
+  // Computed ONCE in JS (not a bare `now()` in SQL) so the SAME instant is the
+  // persisted received_at, the sivihub_event_outbox event's sent_at (spec item 4:
+  // "sent_at del evento = la columna guardada"), AND the value returned to the
+  // caller (ADR-0048 corte 4 decision 2 — the SiviHub reply route echoes THIS,
+  // never a fresh clock read).
+  const sentAt = new Date();
+
   // 4) Persist the outbound row (TX#2 — atomic write: upsert contact + insert message).
   try {
     await deps.db.withTenant(tenantId, async (tx) => {
@@ -147,10 +162,6 @@ export const sendWhatsappText = async (
       if (!contact.ok) {
         throw new Error(`upsertContactTx failed: ${contact.error.code}`);
       }
-      // Computed once in JS (not a bare `now()` in SQL) so the SAME instant is both
-      // the persisted received_at AND the sivihub_event_outbox event's sent_at
-      // (spec item 4: "sent_at del evento = la columna guardada").
-      const sentAt = new Date();
       // RETURNING id distinguishes a genuine insert from a no-op on a duplicate
       // wamid — the enqueue below MUST fire only for the former.
       const insertResult = await tx.execute(rawSql`
@@ -190,8 +201,22 @@ export const sendWhatsappText = async (
     });
   } catch (cause) {
     // Send already happened — surface DB_ERROR; never roll back the send.
+    // The message is already out on WhatsApp but failed to persist — this is
+    // otherwise INVISIBLE (the caller only sees a generic 500), so log it for
+    // manual reconciliation. NEVER log input.text (the message body) or the
+    // thrown error's raw message (which may echo bound values) — only
+    // correlation-safe identifiers.
+    deps.logger.error(
+      {
+        tenantId,
+        wamid,
+        phoneNumberId,
+        causeType: cause instanceof Error ? cause.name : typeof cause,
+      },
+      'sendWhatsappText: WhatsApp message was sent but persisting it failed — needs manual reconciliation',
+    );
     return err({ code: 'DB_ERROR', cause });
   }
 
-  return ok({ wamid, status });
+  return ok({ wamid, status, sentAt });
 };

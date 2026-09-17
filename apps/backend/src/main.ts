@@ -41,7 +41,7 @@ if (env.WHATSAPP_PROVIDER === 'dialog360' && !env.DIALOG360_BASE_URL) {
   );
 }
 
-const db = createDbClient(env);
+const db = createDbClient(env, logger);
 
 // Provider selection:
 //   dialog360 → 360dialog adapter (opt-in via env; works in dev so the sandbox is reachable)
@@ -61,13 +61,16 @@ const llm = env.ENABLE_DEV_ENDPOINTS
   ? createFakeLlmAdapter()
   : createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL);
 
-const app = buildApp({ db, env, meta, llm, logger });
+// Created ONCE at composition time — threaded into BOTH buildApp (S1's inbound
+// auth middleware, corte 4) and the outbox drain loop below (corte 1, B3).
+const sivihubLinkCipher = createSivihubLinkSecretCipher(env.SIVIHUB_LINK_ENCRYPTION_KEY);
+
+const app = buildApp({ db, env, meta, llm, logger, sivihubLinkCipher });
 
 // SiviHub Link outbox drain (ADR-0048 corte 1, B3) — its own least-privilege,
 // cross-tenant connection (app_outbox_drain), never db.adminSql. See the module
 // doc in sivihub-outbox-drain-client.ts for why.
 const outboxDrainDb = createOutboxDrainDb(env);
-const sivihubLinkCipher = createSivihubLinkSecretCipher(env.SIVIHUB_LINK_ENCRYPTION_KEY);
 const outboxDrain = createSivihubOutboxDrainLoop({
   drainDb: outboxDrainDb.db,
   cipher: sivihubLinkCipher,

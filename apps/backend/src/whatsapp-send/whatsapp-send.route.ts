@@ -66,7 +66,10 @@ export const createWhatsappSendRoute = (
       return c.json({ error: errorCode }, status);
     }
 
-    return c.json(result.value, 200);
+    // Explicit shape — never spread the full SendOk (which also carries sentAt,
+    // an internal detail this route has never promised). Mirrors /sivihub/messages'
+    // own explicit response construction.
+    return c.json({ wamid: result.value.wamid, status: result.value.status }, 200);
   });
 
   return router;

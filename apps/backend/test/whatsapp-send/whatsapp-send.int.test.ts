@@ -219,6 +219,27 @@ describe('POST /whatsapp-send — integration tests', () => {
   });
 
   // -------------------------------------------------------------------------
+  // (a1) Response shape is pinned — no additive field (e.g. sentAt) leaks
+  // -------------------------------------------------------------------------
+
+  it('(a1) response body is EXACTLY { wamid, status } — sentAt (or any other field) never leaks', async () => {
+    await db.seedWhatsappAccount({
+      phoneNumberId: PHONE_NUMBER_ID,
+      tenantId: TENANT_A,
+      displayPhoneNumber: '+51111111111',
+      wabaId: 'waba_a',
+      accessToken: 'tok-abc',
+    });
+
+    const res = await sendRequest(app, TENANT_A, { to: RECIPIENT_PHONE, text: SEND_TEXT });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // toEqual pins the EXACT shape — this route must never widen just because
+    // SendOk (the internal service result) gains a new field.
+    expect(body).toEqual({ wamid: 'wamid-fake-1', status: 'accepted' });
+  });
+
+  // -------------------------------------------------------------------------
   // (b) No active account
   // -------------------------------------------------------------------------
 

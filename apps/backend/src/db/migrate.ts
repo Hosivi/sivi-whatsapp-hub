@@ -44,6 +44,7 @@ const MIGRATION_FILES = [
   '0004_tenant_ai_config.sql',
   '0006_sivihub_links.sql',
   '0007_sivihub_event_outbox.sql',
+  '0008_sivihub_links_auth_read.sql',
 ] as const;
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 

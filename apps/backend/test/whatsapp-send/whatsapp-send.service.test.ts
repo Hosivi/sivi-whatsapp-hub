@@ -8,6 +8,7 @@
  */
 
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppDeps } from '../../src/app.js';
 import type { TenantRunner } from '../../src/db/client.js';
@@ -17,6 +18,13 @@ import {
   resolveActiveAccount,
   sendWhatsappText,
 } from '../../src/whatsapp-send/whatsapp-send.service.js';
+
+// ---------------------------------------------------------------------------
+// Fake logger — sendWhatsappText's DB_ERROR path logs (never the message body);
+// these tests only need a stub that never throws when .error() is called.
+// ---------------------------------------------------------------------------
+
+const FAKE_LOGGER = { error: () => {} } as unknown as Logger;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,7 +96,8 @@ function makeDeps(
       WHATSAPP_META_API_VERSION: 'v21.0',
     },
     meta,
-  };
+    logger: FAKE_LOGGER,
+  } as AppDeps;
 }
 
 const TENANT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -348,7 +357,8 @@ describe('sendWhatsappText: success path', () => {
         WHATSAPP_META_API_VERSION: 'v21.0',
       },
       meta,
-    };
+      logger: FAKE_LOGGER,
+    } as AppDeps;
 
     const result = await sendWhatsappText(deps, TENANT_ID, {
       to: RAW_TO,
@@ -398,6 +408,13 @@ describe('sendWhatsappText: DB_ERROR path', () => {
       throw new Error('DB connection lost');
     };
 
+    const logCalls: unknown[][] = [];
+    const capturingLogger = {
+      error: (...args: unknown[]) => {
+        logCalls.push(args);
+      },
+    } as unknown as Logger;
+
     const deps: AppDeps = {
       db: {
         withTenant,
@@ -420,10 +437,17 @@ describe('sendWhatsappText: DB_ERROR path', () => {
         WHATSAPP_META_API_VERSION: 'v21.0',
       },
       meta,
-    };
+      logger: capturingLogger,
+    } as AppDeps;
 
     const result = await sendWhatsappText(deps, TENANT_ID, SEND_INPUT);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('DB_ERROR');
+
+    // The already-sent message must be visible for manual reconciliation —
+    // but never with the message body ("Hola", SEND_INPUT.text) in the line.
+    expect(logCalls.length).toBeGreaterThanOrEqual(1);
+    const loggedText = JSON.stringify(logCalls);
+    expect(loggedText).not.toContain(SEND_INPUT.text);
   });
 });
