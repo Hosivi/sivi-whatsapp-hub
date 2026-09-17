@@ -201,6 +201,20 @@ export const sendWhatsappText = async (
     });
   } catch (cause) {
     // Send already happened — surface DB_ERROR; never roll back the send.
+    // The message is already out on WhatsApp but failed to persist — this is
+    // otherwise INVISIBLE (the caller only sees a generic 500), so log it for
+    // manual reconciliation. NEVER log input.text (the message body) or the
+    // thrown error's raw message (which may echo bound values) — only
+    // correlation-safe identifiers.
+    deps.logger.error(
+      {
+        tenantId,
+        wamid,
+        phoneNumberId,
+        causeType: cause instanceof Error ? cause.name : typeof cause,
+      },
+      'sendWhatsappText: WhatsApp message was sent but persisting it failed — needs manual reconciliation',
+    );
     return err({ code: 'DB_ERROR', cause });
   }
 

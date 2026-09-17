@@ -10,16 +10,20 @@
  * (c) Meta 131047 (24h window) → a distinct, stable error code — never a 500
  * (d) an unsigned request never reaches the handler (Meta not called, no row)
  * (e) validation: unknown extra field → 422 (strict body)
+ * (f) Meta sends, the DB insert throws → 500 INTERNAL_ERROR, cause not leaked,
+ *     the already-sent message is logged for reconciliation without its body
  *
  * STRICT TDD MODE — written RED before implementation.
  */
 
 import { sql as rawSql } from 'drizzle-orm';
+import type { Logger } from 'pino';
 import pino from 'pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
+import type { TenantRunner } from '../../src/db/client.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import { err } from '../../src/shared/result.js';
 import {
@@ -217,5 +221,64 @@ describe('POST /sivihub/messages — S2 integration tests', () => {
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toBe('VALIDATION_ERROR');
+  });
+
+  it('(f) Meta sends, the DB insert throws → 500 INTERNAL_ERROR; cause not leaked; a log line records the already-sent message without its body', async () => {
+    const linkId = await seedLink();
+    const meta = createFakeMetaClient();
+
+    // The account-read tx (1st withTenant call) delegates to the REAL Testcontainers
+    // db so resolveActiveAccount genuinely succeeds; the write tx (2nd call) throws
+    // to simulate "Meta sent, then the DB insert failed" without needing a real
+    // Postgres constraint violation.
+    let withTenantCallCount = 0;
+    const dbWithFailingWrite = {
+      ...db,
+      withTenant: (async (tenantId: string, run: (tx: unknown) => Promise<unknown>) => {
+        withTenantCallCount++;
+        if (withTenantCallCount === 1) {
+          return db.withTenant(tenantId, run as never);
+        }
+        throw new Error('simulated write-tx failure: connection lost');
+      }) as TenantRunner,
+    };
+
+    const logCalls: unknown[][] = [];
+    const fakeLogger = {
+      error: (...args: unknown[]) => {
+        logCalls.push(args);
+      },
+    } as unknown as Logger;
+
+    const app = buildApp({
+      db: dbWithFailingWrite,
+      env: makeEnv(),
+      meta,
+      llm: createFakeLlmAdapter(),
+      logger: fakeLogger,
+      sivihubLinkCipher: cipher,
+    });
+
+    const rawBody = JSON.stringify({ to: RECIPIENT_PHONE, text: SEND_TEXT });
+    const callsBefore = meta.calls.length;
+
+    const res = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkId, rawBody),
+      body: rawBody,
+    });
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: 'INTERNAL_ERROR' });
+
+    // Meta WAS called — the send is never rolled back once it succeeded.
+    expect(meta.calls.length).toBe(callsBefore + 1);
+
+    // The failure must be visible for manual reconciliation — but never with
+    // the message body in the log line.
+    expect(logCalls.length).toBeGreaterThanOrEqual(1);
+    const loggedText = JSON.stringify(logCalls);
+    expect(loggedText).not.toContain(SEND_TEXT);
   });
 });
