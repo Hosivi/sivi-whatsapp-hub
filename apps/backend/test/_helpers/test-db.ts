@@ -40,13 +40,19 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { sql as rawSql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import type { TenantRunner, WebhookLookupError } from '../../src/db/client.js';
+import type {
+  SivihubLinkAuth,
+  SivihubLinkAuthLookupError,
+  TenantRunner,
+  WebhookLookupError,
+} from '../../src/db/client.js';
 import { contactsTable } from '../../src/db/schema/contacts.schema.js';
+import { sivihubLinksTable } from '../../src/db/schema/sivihub-links.schema.js';
 import { whatsappAccountsTable } from '../../src/db/schema/whatsapp-accounts.schema.js';
 import type { Result } from '../../src/shared/result.js';
 import { err, ok } from '../../src/shared/result.js';
@@ -65,6 +71,7 @@ const MIGRATION_FILES = [
   '0004_tenant_ai_config.sql',
   '0006_sivihub_links.sql',
   '0007_sivihub_event_outbox.sql',
+  '0008_sivihub_links_auth_read.sql',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -94,6 +101,13 @@ export type TestDb = {
   resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
   /** Resolve a tenant from phone_number_id using the app_webhook connection (low-priv). */
   resolveWebhookTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
+  /**
+   * Resolves a SiviHub link's tenant + encrypted secret from its id, using the
+   * app_webhook connection (low-priv, cross-tenant). Satisfies the
+   * DbClient.resolveSivihubLink contract so TestDb can be passed to buildApp()
+   * (ADR-0048 corte 4, S1).
+   */
+  resolveSivihubLink(linkId: string): Promise<Result<SivihubLinkAuth, SivihubLinkAuthLookupError>>;
   /** Insert a contact row for the given tenant directly (bypasses RLS via adminSql). */
   seedTenant(
     tenantId: string,
@@ -250,6 +264,30 @@ export async function createTestDb(): Promise<TestDb> {
         return err({ code: 'UNKNOWN_PHONE_NUMBER_ID' });
       }
       return ok(row.tenantId);
+    },
+
+    async resolveSivihubLink(
+      linkId: string,
+    ): Promise<Result<SivihubLinkAuth, SivihubLinkAuthLookupError>> {
+      try {
+        const rows = await appWebhookDb
+          .select({
+            id: sivihubLinksTable.id,
+            tenantId: sivihubLinksTable.tenantId,
+            secretEncrypted: sivihubLinksTable.secretEncrypted,
+          })
+          .from(sivihubLinksTable)
+          .where(and(eq(sivihubLinksTable.id, linkId), eq(sivihubLinksTable.status, 'active')))
+          .limit(1);
+
+        const row = rows[0] ?? null;
+        if (!row) {
+          return err({ code: 'UNKNOWN_LINK' });
+        }
+        return ok({ id: row.id, tenantId: row.tenantId, secretEncrypted: row.secretEncrypted });
+      } catch {
+        return err({ code: 'UNKNOWN_LINK' });
+      }
     },
 
     async truncate() {

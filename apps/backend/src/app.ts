@@ -43,6 +43,7 @@ import { createHealthRoute } from './core/health/health.route.js';
 import type { DbClient } from './db/client.js';
 import { createDevRoute } from './dev/webhook-sign.route.js';
 import type { MetaClient } from './meta/meta-client.js';
+import type { SivihubLinkSecretCipher } from './sivihub-link/sivihub-link-secret-cipher.js';
 import { createWhatsappWebhookRoute } from './webhooks/whatsapp.route.js';
 import { createWhatsappMessagesRoute } from './whatsapp-messages/whatsapp-messages.route.js';
 import { createWhatsappSendRoute } from './whatsapp-send/whatsapp-send.route.js';
@@ -55,6 +56,12 @@ export type AppDeps = {
   readonly llm: LlmAdapter;
   /** Pino logger instance threaded from main.ts so the AI orchestrator can audit. */
   readonly logger: Logger;
+  /**
+   * Decrypts sivihub_links.secret_encrypted — needed by the S1 inbound auth
+   * middleware to verify a SiviHub-originated request's signature (ADR-0048
+   * corte 4). The SAME instance main.ts threads into the outbox drain loop.
+   */
+  readonly sivihubLinkCipher: SivihubLinkSecretCipher;
 };
 
 /**

@@ -19,13 +19,14 @@
  * set_config() call and all subsequent repo queries.
  */
 
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { sql as rawSql } from 'drizzle-orm';
 import { type PostgresJsDatabase, drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import type { Env } from '../config/env.js';
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
+import { sivihubLinksTable } from './schema/sivihub-links.schema.js';
 import { whatsappAccountsTable } from './schema/whatsapp-accounts.schema.js';
 
 // ---------------------------------------------------------------------------
@@ -46,6 +47,22 @@ export type TenantRunner = <T>(
 /** Error returned by resolveTenant when phone_number_id is not found. */
 export type WebhookLookupError = { readonly code: 'UNKNOWN_PHONE_NUMBER_ID' };
 
+/**
+ * Error returned by resolveSivihubLink when the link id is unknown OR the link
+ * is not 'active'. Both collapse to the SAME code — S1's auth middleware answers
+ * the identical 401 whether the link never existed or was revoked (ADR-0048
+ * corte 4, S1 — "unknown link" and "inactive link" are indistinguishable to the
+ * caller by design).
+ */
+export type SivihubLinkAuthLookupError = { readonly code: 'UNKNOWN_LINK' };
+
+/** The columns S1's auth middleware needs to authenticate a SiviHub request. */
+export type SivihubLinkAuth = {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly secretEncrypted: string;
+};
+
 export type DbClient = {
   readonly withTenant: TenantRunner;
   /** Privileged handle — migration/bootstrap ONLY. Never pass to repositories. */
@@ -57,6 +74,13 @@ export type DbClient = {
    * lookupSql is PRIVATE — not exposed on DbClient.
    */
   resolveTenant(phoneNumberId: string): Promise<Result<string, WebhookLookupError>>;
+  /**
+   * Resolves a SiviHub link's tenant + encrypted secret from its id, using the SAME
+   * low-privilege app_webhook handle (cross-tenant, column-scoped — ADR-0048 corte 4,
+   * S1). Only an 'active' link resolves; an unknown id or a revoked link both
+   * return err(UNKNOWN_LINK) so the caller never learns which case it was.
+   */
+  resolveSivihubLink(linkId: string): Promise<Result<SivihubLinkAuth, SivihubLinkAuthLookupError>>;
   close(): Promise<void>;
 };
 
@@ -117,10 +141,51 @@ export const createDbClient = (env: Env): DbClient => {
     return ok(row.tenantId);
   };
 
+  /**
+   * Resolves a SiviHub link's tenant + encrypted secret from its id, using the SAME
+   * app_webhook (low-privilege, cross-tenant) handle as resolveTenant (ADR-0048
+   * corte 4, S1 — "the tenant comes from the link row, never from the request").
+   * Selects EXPLICIT columns — the app_webhook column grant (0008) restricts to
+   * id, tenant_id, secret_encrypted, status only.
+   *
+   * The WHERE clause filters status = 'active' directly — a revoked link and an
+   * unknown id both return zero rows, so both collapse to the SAME err(UNKNOWN_LINK)
+   * with no way for the caller to distinguish them.
+   *
+   * Wrapped in try/catch: linkId originates from an HTTP header and may not even be
+   * a well-formed UUID — Postgres would throw "invalid input syntax for type uuid"
+   * on a raw compare. That failure mode collapses to the same UNKNOWN_LINK result
+   * rather than an unhandled 500.
+   */
+  const resolveSivihubLink = async (
+    linkId: string,
+  ): Promise<Result<SivihubLinkAuth, SivihubLinkAuthLookupError>> => {
+    try {
+      const rows = await lookupDb
+        .select({
+          id: sivihubLinksTable.id,
+          tenantId: sivihubLinksTable.tenantId,
+          secretEncrypted: sivihubLinksTable.secretEncrypted,
+        })
+        .from(sivihubLinksTable)
+        .where(and(eq(sivihubLinksTable.id, linkId), eq(sivihubLinksTable.status, 'active')))
+        .limit(1);
+
+      const row = rows[0] ?? null;
+      if (!row) {
+        return err({ code: 'UNKNOWN_LINK' });
+      }
+      return ok({ id: row.id, tenantId: row.tenantId, secretEncrypted: row.secretEncrypted });
+    } catch {
+      return err({ code: 'UNKNOWN_LINK' });
+    }
+  };
+
   return {
     withTenant,
     adminSql,
     resolveTenant,
+    resolveSivihubLink,
     close: async () => {
       await sql.end();
       await adminSql.end();
