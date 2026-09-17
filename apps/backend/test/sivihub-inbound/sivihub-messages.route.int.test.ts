@@ -12,6 +12,9 @@
  * (e) validation: unknown extra field → 422 (strict body)
  * (f) Meta sends, the DB insert throws → 500 INTERNAL_ERROR, cause not leaked,
  *     the already-sent message is logged for reconciliation without its body
+ * (g) per-link rate limit: under the configured max → 200; one more in the
+ *     same window → 429 with Retry-After
+ * (h) two different links never share a rate-limit budget
  *
  * STRICT TDD MODE — written RED before implementation.
  */
@@ -280,5 +283,114 @@ describe('POST /sivihub/messages — S2 integration tests', () => {
     expect(logCalls.length).toBeGreaterThanOrEqual(1);
     const loggedText = JSON.stringify(logCalls);
     expect(loggedText).not.toContain(SEND_TEXT);
+  });
+
+  it('(g) per-link rate limit: under the max → 200; one more in the same window → 429 with Retry-After', async () => {
+    const linkId = await seedLink();
+    const app = buildApp({
+      db,
+      env: makeEnv({
+        SIVIHUB_MESSAGES_RATE_LIMIT_MAX: 2,
+        SIVIHUB_MESSAGES_RATE_LIMIT_WINDOW_MS: 60_000,
+      }),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+      sivihubLinkCipher: cipher,
+    });
+    const rawBody = JSON.stringify({ to: RECIPIENT_PHONE, text: SEND_TEXT });
+
+    const res1 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkId, rawBody),
+      body: rawBody,
+    });
+    expect(res1.status).toBe(200);
+
+    const res2 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkId, rawBody),
+      body: rawBody,
+    });
+    expect(res2.status).toBe(200);
+
+    const res3 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkId, rawBody),
+      body: rawBody,
+    });
+    expect(res3.status).toBe(429);
+    const body3 = await res3.json();
+    expect(body3).toEqual({ error: 'RATE_LIMITED' });
+    const retryAfter = res3.headers.get('retry-after');
+    expect(retryAfter).not.toBeNull();
+    expect(Number(retryAfter)).toBeGreaterThan(0);
+  });
+
+  it('(h) two different links never share a rate-limit budget', async () => {
+    const TENANT_B = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    const SECRET_B_HEX = '2'.repeat(64);
+    const PHONE_NUMBER_ID_B = 'sivihub-messages-pnid-2';
+
+    const linkA = await seedLink();
+
+    await db.seedWhatsappAccount({
+      phoneNumberId: PHONE_NUMBER_ID_B,
+      tenantId: TENANT_B,
+      displayPhoneNumber: '+51222222222',
+      wabaId: 'waba_b',
+      accessToken: 'tok-b',
+    });
+    const { id: linkB } = await db.withTenant(TENANT_B, (tx) =>
+      storeOrReplaceActiveLink(
+        tx,
+        TENANT_B,
+        'https://sivihub.pe/hooks',
+        cipher.encrypt(SECRET_B_HEX),
+      ),
+    );
+
+    const app = buildApp({
+      db,
+      env: makeEnv({
+        SIVIHUB_MESSAGES_RATE_LIMIT_MAX: 1,
+        SIVIHUB_MESSAGES_RATE_LIMIT_WINDOW_MS: 60_000,
+      }),
+      meta: createFakeMetaClient(),
+      llm: createFakeLlmAdapter(),
+      logger: pino({ level: 'silent' }),
+      sivihubLinkCipher: cipher,
+    });
+
+    const rawBodyA = JSON.stringify({ to: RECIPIENT_PHONE, text: SEND_TEXT });
+    const resA1 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkA, rawBodyA),
+      body: rawBodyA,
+    });
+    expect(resA1.status).toBe(200);
+
+    // Link A is now over its (max=1) budget for this window.
+    const resA2 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: signedHeaders(linkA, rawBodyA),
+      body: rawBodyA,
+    });
+    expect(resA2.status).toBe(429);
+
+    // Link B has its OWN budget — unaffected by link A's usage.
+    const rawBodyB = JSON.stringify({ to: RECIPIENT_PHONE, text: SEND_TEXT });
+    const nowSecondsB = Math.floor(Date.now() / 1000);
+    const resB1 = await app.request('/sivihub/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [SIVIHUB_LINK_ID_HEADER]: linkB,
+        [SIVIHUB_TIMESTAMP_HEADER]: String(nowSecondsB),
+        [SIVIHUB_SIGNATURE_HEADER]: signSivihubEvent(SECRET_B_HEX, rawBodyB, nowSecondsB),
+      },
+      body: rawBodyB,
+    });
+    expect(resB1.status).toBe(200);
   });
 });

@@ -19,6 +19,10 @@
  * distinct, stable code Meta's 24h-window rejection (metaCode 131047) already
  * maps to in whatsapp-send.errors.ts. DB_ERROR is surfaced as a generic
  * INTERNAL_ERROR — never leak cause. Mirrors whatsapp-send.route.ts.
+ *
+ * A per-link rate limit (createSivihubMessagesRateLimitMiddleware) is mounted
+ * AHEAD of S1 — see sivihub-messages-rate-limit.ts for the ceiling and env
+ * overrides. Over the limit answers 429 before S1 or the handler ever run.
  */
 
 import { Hono } from 'hono';
@@ -28,6 +32,7 @@ import { sendErrorToHttpStatus } from '../whatsapp-send/whatsapp-send.errors.js'
 import { sendWhatsappText } from '../whatsapp-send/whatsapp-send.service.js';
 import { createSivihubInboundAuthMiddleware } from './sivihub-inbound-auth.middleware.js';
 import type { SivihubInboundVariables } from './sivihub-inbound-auth.middleware.js';
+import { createSivihubMessagesRateLimitMiddleware } from './sivihub-messages-rate-limit.middleware.js';
 
 // ---------------------------------------------------------------------------
 // Body schema — strict: unknown fields are rejected, not silently dropped.
@@ -49,6 +54,11 @@ export const createSivihubMessagesRoute = (
   deps: AppDeps,
 ): Hono<{ Variables: SivihubInboundVariables }> => {
   const router = new Hono<{ Variables: SivihubInboundVariables }>();
+
+  // Per-link rate limit — AHEAD of auth, keyed by the raw header (cheaper than
+  // a DB round trip; a bogus link id is harmless to budget since it would
+  // fail S1 anyway).
+  router.use('*', createSivihubMessagesRateLimitMiddleware(deps));
 
   // S1 — service auth. NOT createTenantMiddleware: this route has no X-Tenant-Id;
   // the tenant is resolved from the link inside S1.

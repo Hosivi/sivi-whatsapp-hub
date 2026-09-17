@@ -56,6 +56,14 @@ const envSchema = z.object({
   DATABASE_OUTBOX_URL: z.string().min(1),
   // Optional: prod password for the app_outbox_drain role (mirrors APP_WEBHOOK_PASSWORD).
   APP_OUTBOX_DRAIN_PASSWORD: z.string().optional(),
+  // Per-link rate limit in front of POST /sivihub/messages (ADR-0048 corte 4
+  // correction) — caps how many replies one SiviHub link can send in one window,
+  // so a leaked link secret or a retry bug never floods real WhatsApp sends.
+  // Both optional: the middleware falls back to its own documented default
+  // (30 requests / 60s) when unset, which also covers hand-built Env objects
+  // in tests that predate these fields.
+  SIVIHUB_MESSAGES_RATE_LIMIT_MAX: z.coerce.number().int().positive().optional(),
+  SIVIHUB_MESSAGES_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

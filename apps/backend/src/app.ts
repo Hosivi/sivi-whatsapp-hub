@@ -29,9 +29,11 @@
  * Always when deps present:
  *   GET    /whatsapp-messages → 200 { data: MessageDTO[] } (tenant middleware)
  *   POST   /whatsapp-send     → 200 { wamid, status } (tenant middleware)
- *   POST   /sivihub/messages  → 200 { wamid, sentAt } (S1 SiviHub service-auth
- *                                middleware — NOT the tenant middleware; tenant
- *                                is resolved from the link, never the request)
+ *   POST   /sivihub/messages  → 200 { wamid, sentAt } (per-link rate limit,
+ *                                THEN S1 SiviHub service-auth middleware — NOT
+ *                                the tenant middleware; tenant is resolved
+ *                                from the link, never the request; over the
+ *                                rate limit → 429 with Retry-After)
  *
  * Functional composition — no DI container, no classes, no decorators.
  */
