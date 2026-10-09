@@ -6,7 +6,8 @@
  * uses INSERT ... ON CONFLICT DO NOTHING so repeated runs are no-ops.
  *
  * Exports DEV_TENANT_ID and DEV_PHONE_NUMBER_ID for use by integration tests
- * and the web dev console (via NEXT_PUBLIC_DEFAULT_TENANT_ID).
+ * and the web dev console (via NEXT_PUBLIC_DEFAULT_TENANT_ID), plus the DEV_AI_*
+ * constants reused by configure-meta.ts when it has to recreate the AI config.
  *
  * Usage (as a standalone script):
  *   pnpm --filter @sivihub/whatsapp-hub-backend seed:dev
@@ -26,6 +27,24 @@ export const DEV_TENANT_ID = '00000000-0000-0000-0000-000000000001' as const;
 
 /** Fixed dev phone number ID (Meta's phone_number_id for the dev seed account). */
 export const DEV_PHONE_NUMBER_ID = 'dev-phone-123' as const;
+
+/** Vertical of the dev tenant_ai_config row. */
+export const DEV_AI_VERTICAL = 'tienda_general' as const;
+
+/** Business name of the dev tenant_ai_config row. */
+export const DEV_AI_BUSINESS_NAME = 'Tienda Dev (seed)' as const;
+
+/** Business info (JSONB) of the dev tenant_ai_config row. */
+export const DEV_AI_BUSINESS_INFO = {
+  products: [
+    { name: 'Polo básico', price: 35, description: 'Polo de algodón, tallas S-XL' },
+    { name: 'Jean slim', price: 85, description: 'Jean de mezclilla, tallas 28-36' },
+    { name: 'Casaca deportiva', price: 120, description: 'Casaca ligera, colores variados' },
+  ],
+  hours: 'Lunes a Sábado 9am–8pm, Domingo 10am–6pm',
+  location: 'Jr. de la Unión 456, Lima',
+  delivery: 'Delivery disponible en Lima Metropolitana (24–48 h)',
+};
 
 // ---------------------------------------------------------------------------
 // Seed function
@@ -71,24 +90,14 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
 
   // Insert dev tenant_ai_config row for the tienda_general vertical.
   // ON CONFLICT DO NOTHING (partial unique index on tenant_id, vertical WHERE deleted_at IS NULL).
-  const devBusinessInfo = {
-    products: [
-      { name: 'Polo básico', price: 35, description: 'Polo de algodón, tallas S-XL' },
-      { name: 'Jean slim', price: 85, description: 'Jean de mezclilla, tallas 28-36' },
-      { name: 'Casaca deportiva', price: 120, description: 'Casaca ligera, colores variados' },
-    ],
-    hours: 'Lunes a Sábado 9am–8pm, Domingo 10am–6pm',
-    location: 'Jr. de la Unión 456, Lima',
-    delivery: 'Delivery disponible en Lima Metropolitana (24–48 h)',
-  };
   await sql`
     INSERT INTO tenant_ai_config
       (tenant_id, vertical, business_name, business_info, enabled, deleted_at)
     VALUES
       (${DEV_TENANT_ID}::uuid,
-       'tienda_general',
-       'Tienda Dev (seed)',
-       ${JSON.stringify(devBusinessInfo)}::jsonb,
+       ${DEV_AI_VERTICAL},
+       ${DEV_AI_BUSINESS_NAME},
+       ${JSON.stringify(DEV_AI_BUSINESS_INFO)}::jsonb,
        true,
        NULL)
     ON CONFLICT DO NOTHING
