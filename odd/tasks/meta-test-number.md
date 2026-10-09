@@ -75,10 +75,20 @@ Chain strategy is not needed unless the owner wants the PR split.
   (same as `seed-dev.ts`; admin bypasses RLS for bootstrap); re-running `seed:dev` after
   `configure:meta` leaves two active accounts (documented in the runbook); `mapMetaError`
   hides Meta 401/190 as `META_API_ERROR`.
-- Native review: assess T1 → risk `medium` (`configuration_change` on package.json),
-  `review_due` = `slice_budget_reached`; preflight pending after T2 commit.
+- Native review: slice `a819491..0de065b` → risk `medium` (`configuration_change` on
+  package.json), `review_due` = `slice_budget_reached`; owner consent **granted**; lens
+  `review-reliability` → **approved**; acknowledged, lineage `review-164cd12c98fef37d`
+  (authority burned). Reviewed boundary is now `0de065b`.
+
+## Follow-ups (advisory review findings, non-blocking, not in this scope)
+
+- R3-001 (WARNING) `configure-meta.ts:187-196`: if the dev tenant only has an inactive live
+  `whatsapp_accounts` row, the script inserts a second row; with the same `phone_number_id`
+  it fails as `PHONE_NUMBER_ID_IN_USE` blaming another tenant. Reuse/reactivate that row and test it.
+- R3-002 `configure-meta.ts:183-185`: `DEV_TENANT_NOT_SEEDED` is inferred from child rows, not the tenant itself.
+- R3-003 `configure-meta.ts:170-181`: `FOR UPDATE` on an empty set does not serialize concurrent inserts.
+- R3-004 `configure-meta.int.test.ts:290-303`: idempotency test should assert `updated` and unchanged row id.
 
 ## Next step
 
-Run the native review preflight on the `a819491..HEAD` slice; then the owner follows
-`Docs/runbooks/meta-test-number.md`.
+Owner follows `Docs/runbooks/meta-test-number.md` with the Meta test number. Push/PR are the owner's call.
