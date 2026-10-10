@@ -37,6 +37,13 @@ const mockGetTenantAiConfig = vi.fn();
 const mockGetConversationHistory = vi.fn();
 const mockSendWhatsappText = vi.fn();
 const mockExecuteTool = vi.fn();
+const mockInsertAiReplyUsageTx = vi.fn();
+const mockPersistAiReplyUsage = vi.fn();
+
+vi.mock('../../src/ai/ai-reply-usage.repository.js', () => ({
+  insertAiReplyUsageTx: (...args: unknown[]) => mockInsertAiReplyUsageTx(...args),
+  persistAiReplyUsage: (...args: unknown[]) => mockPersistAiReplyUsage(...args),
+}));
 
 vi.mock('../../src/ai/tenant-ai-config.repository.js', () => ({
   getTenantAiConfig: (...args: unknown[]) => mockGetTenantAiConfig(...args),
@@ -412,5 +419,210 @@ describe('runAiReply', () => {
       expect(['DB_ERROR', 'LLM_FAILED', 'AI_DISABLED'].includes(result.error.code)).toBe(true);
     }
     expect(fakeLogger.error).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Usage accounting (ai-usage-visibility T1)
+// ---------------------------------------------------------------------------
+
+describe('runAiReply — usage accounting', () => {
+  const TOOL_TURN = ok({
+    text: null,
+    toolUses: [{ id: 'fc-1', name: 'getBusinessInfo', input: {} }],
+    stopReason: 'tool_use' as const,
+    usage: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5, totalTokens: 120 },
+    answeredBy: { provider: 'gemini' as const, model: 'gemini-3.5-flash-lite' },
+    fallbackAttempts: [],
+  });
+  const TEXT_TURN = ok({
+    text: 'Abrimos de 9 a 18.',
+    toolUses: [],
+    stopReason: 'end_turn' as const,
+    usage: { inputTokens: 150, outputTokens: 30, cachedInputTokens: 64, totalTokens: 180 },
+    answeredBy: { provider: 'openai' as const, model: 'gpt-6-luna' },
+    fallbackAttempts: [
+      { model: 'gemini:gemini-3.5-flash-lite', reason: 'http_error' as const, status: 503 },
+    ],
+  });
+  const INPUT_WITH_WAMID = { ...INPUT, inboundWamid: 'wamid-in-1' };
+
+  /** The send options runAiReply handed to sendWhatsappText (4th argument). */
+  const sendOptions = () =>
+    mockSendWhatsappText.mock.calls[0]?.[3] as
+      | {
+          persistInTx?: (
+            tx: unknown,
+            persisted: { wamid: string; contactId: string },
+          ) => Promise<void>;
+        }
+      | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetTenantAiConfig.mockResolvedValue(ok(makeConfig()));
+    mockGetConversationHistory.mockResolvedValue([]);
+    mockExecuteTool.mockResolvedValue(makeToolMsg('fc-1', 'getBusinessInfo'));
+    mockSendWhatsappText.mockResolvedValue(ok({ wamid: 'wamid-out-1', status: 'accepted' }));
+    mockInsertAiReplyUsageTx.mockResolvedValue('inserted');
+    mockPersistAiReplyUsage.mockResolvedValue(undefined);
+  });
+
+  it('(j) sums usage across a 2-call tool loop and persists ONE sent row inside the send transaction', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([TOOL_TURN, TEXT_TURN]);
+
+    const result = await runAiReply(deps, INPUT_WITH_WAMID);
+    expect(result.ok).toBe(true);
+
+    // The usage row is written through the send persist hook (same tx as the message row).
+    const options = sendOptions();
+    expect(typeof options?.persistInTx).toBe('function');
+    const fakeTx = { marker: 'tx' };
+    await options?.persistInTx?.(fakeTx, { wamid: 'wamid-out-1', contactId: CONTACT_ID });
+
+    expect(mockInsertAiReplyUsageTx).toHaveBeenCalledOnce();
+    const [tx, tenantId, record] = mockInsertAiReplyUsageTx.mock.calls[0] ?? [];
+    expect(tx).toBe(fakeTx);
+    expect(tenantId).toBe(TENANT_ID);
+    expect(record).toEqual({
+      contactId: CONTACT_ID,
+      inboundWamid: 'wamid-in-1',
+      outboundWamid: 'wamid-out-1',
+      status: 'sent',
+      provider: 'openai',
+      model: 'gpt-6-luna',
+      inputTokens: 250,
+      outputTokens: 50,
+      reasoningTokens: 5,
+      cachedInputTokens: 64,
+      totalTokens: 300,
+      llmCalls: 2,
+      toolCalls: ['getBusinessInfo'],
+      fallbackAttempts: [
+        { call: 2, model: 'gemini:gemini-3.5-flash-lite', reason: 'http_error', status: 503 },
+      ],
+      latencyMs: expect.any(Number),
+    });
+    expect((record as { latencyMs: number }).latencyMs).toBeGreaterThanOrEqual(0);
+    expect(mockPersistAiReplyUsage).not.toHaveBeenCalled();
+  });
+
+  it('(k) ai_reply_sent log carries provider, model and token totals — never prompts or customer text', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([TOOL_TURN, TEXT_TURN]);
+
+    await runAiReply(deps, INPUT_WITH_WAMID);
+
+    expect(fakeLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wamid: 'wamid-out-1',
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        inputTokens: 250,
+        outputTokens: 50,
+        reasoningTokens: 5,
+        totalTokens: 300,
+        llmCalls: 2,
+        fallbackCount: 1,
+      }),
+      'ai_reply_sent',
+    );
+    const logged = JSON.stringify(fakeLogger.info.mock.calls);
+    expect(logged).not.toContain(INPUT.text);
+    expect(logged).not.toContain('Abrimos de 9 a 18.');
+  });
+
+  it('(l) send fails after the LLM ran → persists a send_failed row without outbound wamid', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([TEXT_TURN]);
+    mockSendWhatsappText.mockResolvedValue(err({ code: 'META_API_ERROR' }));
+
+    const result = await runAiReply(deps, INPUT_WITH_WAMID);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe('SEND_FAILED');
+    expect(mockPersistAiReplyUsage).toHaveBeenCalledOnce();
+    const [withTenant, tenantId, record] = mockPersistAiReplyUsage.mock.calls[0] ?? [];
+    expect(withTenant).toBe(deps.db.withTenant);
+    expect(tenantId).toBe(TENANT_ID);
+    expect(record).toEqual(
+      expect.objectContaining({
+        status: 'send_failed',
+        outboundWamid: null,
+        inboundWamid: 'wamid-in-1',
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        inputTokens: 150,
+        llmCalls: 1,
+      }),
+    );
+    expect(fakeLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'openai', model: 'gpt-6-luna', totalTokens: 180 }),
+      'ai_reply_failed reason=SEND_FAILED',
+    );
+  });
+
+  it('(m) no LLM call completed → nothing is persisted', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([err({ code: 'LLM_API_ERROR', status: 500 })]);
+
+    const result = await runAiReply(deps, INPUT_WITH_WAMID);
+
+    expect(result.ok).toBe(false);
+    expect(mockInsertAiReplyUsageTx).not.toHaveBeenCalled();
+    expect(mockPersistAiReplyUsage).not.toHaveBeenCalled();
+  });
+
+  it('(n) send DB_ERROR (reply delivered, persistence failed) → no send_failed row', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([TEXT_TURN]);
+    mockSendWhatsappText.mockResolvedValue(err({ code: 'DB_ERROR', cause: new Error('boom') }));
+
+    const result = await runAiReply(deps, INPUT_WITH_WAMID);
+
+    expect(result.ok).toBe(false);
+    expect(mockPersistAiReplyUsage).not.toHaveBeenCalled();
+  });
+
+  it('(o) ai_reply_usage table missing → hook logs an error and does not throw', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([TEXT_TURN]);
+    mockInsertAiReplyUsageTx.mockResolvedValue('table_missing');
+
+    await runAiReply(deps, INPUT_WITH_WAMID);
+    await expect(
+      sendOptions()?.persistInTx?.({}, { wamid: 'wamid-out-1', contactId: CONTACT_ID }),
+    ).resolves.toBeUndefined();
+
+    expect(fakeLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT_ID, wamid: 'wamid-out-1' }),
+      'ai_reply_usage_not_persisted reason=TABLE_MISSING',
+    );
+  });
+
+  it('(p) a response without usage or answering model still persists zeros and "unknown"', async () => {
+    const deps = makeAppDeps();
+    deps.llm = createFakeLlmAdapter([ok({ text: 'hola', toolUses: [], stopReason: 'end_turn' })]);
+
+    await runAiReply(deps, INPUT);
+    await sendOptions()?.persistInTx?.({}, { wamid: 'wamid-out-1', contactId: CONTACT_ID });
+
+    const record = mockInsertAiReplyUsageTx.mock.calls[0]?.[2];
+    expect(record).toEqual(
+      expect.objectContaining({
+        provider: 'unknown',
+        model: 'unknown',
+        inboundWamid: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: null,
+        cachedInputTokens: null,
+        totalTokens: 0,
+        llmCalls: 1,
+        fallbackAttempts: [],
+      }),
+    );
   });
 });

@@ -284,4 +284,37 @@ describe('runAiReply — E2E integration (Testcontainers)', () => {
     // Assert: no Meta egress
     expect(fakeMeta.calls).toHaveLength(0);
   });
+
+  // -------------------------------------------------------------------------
+  // (d) ai_reply_usage not migrated yet (this suite never applies 0009)
+  // -------------------------------------------------------------------------
+
+  it('(d) ai_reply_usage table missing → reply still sent and persisted; error logged, no throw', async () => {
+    await seedContact(testDb);
+    await seedWhatsappAccount(testDb);
+    await seedTenantAiConfig(testDb);
+    await seedInboundMessage(testDb, new Date().toISOString());
+
+    const { deps, fakeMeta, fakeLogger } = makeRunDeps(testDb);
+
+    const result = await runAiReply(deps, {
+      tenantId: TENANT_ID,
+      contactId: CONTACT_ID,
+      fromPhoneE164: FROM_PHONE_E164,
+      text: 'Hola',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fakeMeta.calls).toHaveLength(1);
+    const outbound = await testDb.adminQuery((tx) =>
+      tx.execute(rawSql`SELECT wamid FROM whatsapp_messages WHERE direction = 'outbound'`),
+    );
+    expect((outbound as unknown as Array<{ wamid: string }>).map((r) => r.wamid)).toEqual([
+      'wamid-fake-1',
+    ]);
+    expect(fakeLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: TENANT_ID, wamid: 'wamid-fake-1' }),
+      'ai_reply_usage_not_persisted reason=TABLE_MISSING',
+    );
+  });
 });

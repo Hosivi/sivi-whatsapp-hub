@@ -626,3 +626,86 @@ describe('createGeminiAdapter — model fallback chain', () => {
     expect(() => createGeminiAdapter('sk-test', [' ', ''], stub.fn)).toThrow(/at least one model/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Token usage + answering model (ai-usage-visibility T1)
+// ---------------------------------------------------------------------------
+
+describe('createGeminiAdapter — token usage and answering model', () => {
+  /** Generate stub answering with text plus the given extra response fields. */
+  const answerWith =
+    (extra: Record<string, unknown>) =>
+    async (_params: GenerateContentParameters): Promise<GenerateContentResponse> =>
+      ({
+        candidates: [{ content: { parts: [{ text: 'hola' }] }, finishReason: 'STOP' }],
+        ...extra,
+      }) as unknown as GenerateContentResponse;
+
+  it('maps usageMetadata: input = prompt + tool-use prompt, output = candidates + thoughts', async () => {
+    const adapter = createGeminiAdapter(
+      'sk-test',
+      'gemini-3.5-flash',
+      answerWith({
+        usageMetadata: {
+          promptTokenCount: 120,
+          toolUsePromptTokenCount: 5,
+          candidatesTokenCount: 30,
+          thoughtsTokenCount: 12,
+          cachedContentTokenCount: 40,
+          totalTokenCount: 167,
+        },
+      }),
+    );
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toStrictEqual({
+      inputTokens: 125,
+      outputTokens: 42,
+      reasoningTokens: 12,
+      cachedInputTokens: 40,
+      totalTokens: 167,
+    });
+    expect(result.value.answeredBy).toStrictEqual({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+    });
+  });
+
+  it('no usageMetadata → usage is undefined (never throws)', async () => {
+    const adapter = createGeminiAdapter('sk-test', 'gemini-3.5-flash', answerWith({}));
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toBeUndefined();
+    expect(result.value.text).toBe('hola');
+  });
+
+  it('partial usageMetadata → missing counts are 0 or omitted; total falls back to input + output', async () => {
+    const adapter = createGeminiAdapter(
+      'sk-test',
+      'gemini-3.5-flash',
+      answerWith({ usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 3 } }),
+    );
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toStrictEqual({ inputTokens: 10, outputTokens: 3, totalTokens: 13 });
+  });
+
+  it('usageMetadata without any valid count → usage is undefined', async () => {
+    const adapter = createGeminiAdapter(
+      'sk-test',
+      'gemini-3.5-flash',
+      answerWith({ usageMetadata: { promptTokenCount: 'x', totalTokenCount: -1 } }),
+    );
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toBeUndefined();
+  });
+
+  it('after an internal fallback, answeredBy names the model that answered', async () => {
+    const stub = makeModelStub({ 'm-lite': [{ kind: 'status', status: 503 }] });
+    const adapter = createGeminiAdapter('sk-test', ['m-lite', 'm-flash'], stub.fn);
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.answeredBy).toStrictEqual({ provider: 'gemini', model: 'm-flash' });
+  });
+});

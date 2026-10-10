@@ -30,6 +30,7 @@ import type {
 import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
 import type { LlmError, LlmMessage, LlmResponse, LlmTool, ToolUseBlock } from './llm-types.js';
+import { buildLlmUsage } from './llm-usage.js';
 
 // ---------------------------------------------------------------------------
 // Injectable contract
@@ -294,7 +295,34 @@ function mapGeminiResponse(response: GenerateContentResponse, model: string): Ll
     stopReason = 'end_turn';
   }
 
-  return { text, toolUses, stopReason };
+  const usage = mapGeminiUsage(response.usageMetadata);
+  return {
+    text,
+    toolUses,
+    stopReason,
+    ...(usage !== undefined ? { usage } : {}),
+    answeredBy: { provider: 'gemini', model },
+  };
+}
+
+/**
+ * Maps Gemini `usageMetadata` (GenerateContentResponseUsageMetadata,
+ * @google/genai 2.10.0 dist/genai.d.ts:5001-5024) onto the neutral LlmUsage.
+ * Per the SDK docs, totalTokenCount = promptTokenCount + candidatesTokenCount +
+ * toolUsePromptTokenCount + thoughtsTokenCount, so:
+ * - input  = promptTokenCount (cachedContentTokenCount included) + toolUsePromptTokenCount
+ * - output = candidatesTokenCount + thoughtsTokenCount (thinking is billed as output)
+ * Absent metadata → undefined; never throws.
+ */
+function mapGeminiUsage(metadata: GenerateContentResponse['usageMetadata']): LlmResponse['usage'] {
+  if (metadata === undefined || metadata === null) return undefined;
+  return buildLlmUsage({
+    input: [metadata.promptTokenCount, metadata.toolUsePromptTokenCount],
+    output: [metadata.candidatesTokenCount, metadata.thoughtsTokenCount],
+    reasoning: metadata.thoughtsTokenCount,
+    cachedInput: metadata.cachedContentTokenCount,
+    total: metadata.totalTokenCount,
+  });
 }
 
 /**

@@ -12,12 +12,16 @@
  *   LEFT JOIN contacts ON whatsapp_messages.contact_id = contacts.id
  *   ORDER BY received_at DESC
  *   LIMIT 50
+ * then, on the same tx, the live 'sent' ai_reply_usage rows of the outbound wamids
+ * (author 'ai' + usage); skipped when migration 0009 is not applied yet.
  *
  * The RLS policy on whatsapp_messages already scopes to the current tenant — no
  * explicit WHERE tenant_id is added.
  */
 
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { findSentUsageByOutboundWamids } from '../ai/ai-reply-usage.repository.js';
+import type { AiReplyUsageSummary } from '../ai/ai-reply-usage.repository.js';
 import type { LlmMessage } from '../ai/llm-types.js';
 import type { TenantRunner } from '../db/client.js';
 import { contactsTable } from '../db/schema/contacts.schema.js';
@@ -27,10 +31,20 @@ import { whatsappMessagesTable } from '../db/schema/whatsapp-messages.schema.js'
 // DTO
 // ---------------------------------------------------------------------------
 
+/**
+ * Who authored a message: the customer (inbound), the AI (outbound with a live
+ * 'sent' ai_reply_usage row for its wamid) or a human operator (any other outbound).
+ */
+export type MessageAuthor = 'customer' | 'ai' | 'operator';
+
 export type MessageDTO = {
   readonly wamid: string;
-  /** contact full_name from joined contacts row, or null if not available */
+  /**
+   * full_name of the conversation's CONTACT (the customer) for both directions —
+   * for outbound rows this is the recipient, not the author; null if not available.
+   */
   readonly name: string | null;
+  /** The contact's phone (sender for inbound, recipient for outbound). */
   readonly phone: string;
   /** text body when message_type = 'text'; null otherwise */
   readonly text: string | null;
@@ -39,6 +53,9 @@ export type MessageDTO = {
   readonly receivedAt: string;
   /** 'inbound' | 'outbound' — mirrors the whatsapp_messages.direction column */
   readonly direction: string;
+  readonly author: MessageAuthor;
+  /** AI usage of the reply when author = 'ai'; null otherwise. */
+  readonly ai: AiReplyUsageSummary | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -128,14 +145,30 @@ export async function listMessages(
       .orderBy(desc(whatsappMessagesTable.receivedAt))
       .limit(50);
 
-    return rows.map((row) => ({
-      wamid: row.wamid,
-      name: row.name ?? null,
-      phone: row.phone,
-      text: row.text ?? null,
-      type: row.type,
-      receivedAt: row.receivedAt.toISOString(),
-      direction: row.direction,
-    }));
+    // Same tenant-scoped tx: RLS on ai_reply_usage hides other tenants' rows.
+    const usageByWamid = await findSentUsageByOutboundWamids(
+      tx,
+      rows.filter((row) => row.direction === 'outbound').map((row) => row.wamid),
+    );
+
+    return rows.map((row): MessageDTO => {
+      const ai = row.direction === 'outbound' ? (usageByWamid.get(row.wamid) ?? null) : null;
+      return {
+        wamid: row.wamid,
+        name: row.name ?? null,
+        phone: row.phone,
+        text: row.text ?? null,
+        type: row.type,
+        receivedAt: row.receivedAt.toISOString(),
+        direction: row.direction,
+        author: authorOf(row.direction, ai !== null),
+        ai,
+      };
+    });
   });
 }
+
+const authorOf = (direction: string, hasAiUsage: boolean): MessageAuthor => {
+  if (direction !== 'outbound') return 'customer';
+  return hasAiUsage ? 'ai' : 'operator';
+};

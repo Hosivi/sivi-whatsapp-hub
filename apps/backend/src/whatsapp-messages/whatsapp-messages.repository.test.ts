@@ -48,6 +48,9 @@ function makeFakeTenantRunner(rows: FakeRow[]): TenantRunner {
     }
     // The terminal method (limit) must return a Promise resolving to rows.
     chainable.limit = () => Promise.resolve(rows);
+    // Raw execute = the ai_reply_usage presence probe: report the table as not
+    // migrated, so outbound rows resolve to 'operator' without a usage query.
+    chainable.execute = () => Promise.resolve([{ present: false }]);
 
     // Run the repository code with our fake tx.
     // Double cast through unknown: the fake only needs to satisfy the fluent chain
@@ -157,5 +160,37 @@ describe('listMessages — direction field in DTO', () => {
     expect(dto?.type).toBe('text');
     expect(dto?.receivedAt).toBe(receivedAt.toISOString());
     expect(dto?.direction).toBe('inbound');
+  });
+});
+
+describe('listMessages — author when ai_reply_usage is not migrated yet (fail-soft)', () => {
+  it('inbound → customer, outbound → operator, ai: null on both', async () => {
+    const fakeRows: FakeRow[] = [
+      {
+        wamid: 'wamid-out-3',
+        name: 'Alice',
+        phone: '+51911111111',
+        text: 'reply',
+        type: 'text',
+        receivedAt: new Date('2026-06-25T12:00:00.000Z'),
+        direction: 'outbound',
+      },
+      {
+        wamid: 'wamid-in-3',
+        name: 'Alice',
+        phone: '+51911111111',
+        text: 'hola',
+        type: 'text',
+        receivedAt: new Date('2026-06-25T11:00:00.000Z'),
+        direction: 'inbound',
+      },
+    ];
+
+    const results = await listMessages(makeFakeTenantRunner(fakeRows), 'tenant-uuid-1');
+
+    expect(results.map((m) => [m.wamid, m.author, m.ai])).toEqual([
+      ['wamid-out-3', 'operator', null],
+      ['wamid-in-3', 'customer', null],
+    ]);
   });
 });

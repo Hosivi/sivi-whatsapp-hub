@@ -36,12 +36,14 @@ import type { Env } from '../config/env.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Relative to compiled output: apps/backend/dist/db/migrate.js → ../../drizzle/
 // Ordered list of migration files. Applied in array order. APPEND new files here.
-const MIGRATION_FILES = [
+// 0005–0008 are taken by unmerged branches; 0009 is appended out of sequence on purpose.
+export const MIGRATION_FILES = [
   '0000_contacts.sql',
   '0001_routing.sql',
   '0002_whatsapp.sql',
   '0003_outbound.sql',
   '0004_tenant_ai_config.sql',
+  '0009_ai_reply_usage.sql',
 ] as const;
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 

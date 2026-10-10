@@ -65,6 +65,17 @@
   --hover: #fafafa;
   --toggle-off: #d4d4d8;
   --placeholder: #a1a1aa;
+
+  /* Message authors: AI replies (violet) vs manual operator sends (blue) */
+  --ai-bg: #faf5ff;
+  --ai-border: #d8b4fe;
+  --ai-accent: #7c3aed;
+  --ai-text: #6b21a8;
+  --ai-badge-bg: #f3e8ff;
+  --op-border: #bfdbfe;
+  --op-accent: #2563eb;
+  --op-text: #1e40af;
+  --op-badge-bg: #eff6ff;
 }
 
 /* -----------------------------------------------------------------------
@@ -129,6 +140,17 @@
   --hover: #2a2a37;
   --toggle-off: #363646;
   --placeholder: #6f6e66;
+
+  /* Message authors: AI replies (oniViolet) vs manual operator sends (crystalBlue) */
+  --ai-bg: #24222f;
+  --ai-border: #4a3f66;
+  --ai-accent: #957fb8;
+  --ai-text: #b9a3e3;
+  --ai-badge-bg: #332d4a;
+  --op-border: #2d4f67;
+  --op-accent: #7e9cd8;
+  --op-text: #7fb4ca;
+  --op-badge-bg: #223249;
 }
 
 /* -----------------------------------------------------------------------
