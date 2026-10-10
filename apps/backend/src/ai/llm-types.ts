@@ -55,12 +55,24 @@ export type ToolUseBlock = {
    */
   readonly thoughtSignature?: string;
   /**
-   * Gemini-only, provider-opaque ID of the model that emitted this block. When the
-   * tool-use turn is replayed, the adapter tries this model first (model affinity
-   * with its own thought signatures). Never sent to the provider; ignored by every
-   * other adapter.
+   * Provider-opaque ID of the model that emitted this block. When the tool-use turn
+   * is replayed, the model chain tries this model first (model affinity — e.g. with
+   * its own Gemini thought signatures). The Gemini adapter stamps the bare model ID;
+   * the OpenAI adapter and the cross-provider chain stamp `<provider>:<model>`.
+   * Never sent to any provider.
    */
   readonly producerModel?: string;
+};
+
+/** LLM providers an AI_MODEL entry may name (`<provider>:<model>`). */
+export const LLM_PROVIDERS = ['gemini', 'openai'] as const;
+
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+
+/** One entry of the ordered model chain: which provider serves which model ID. */
+export type LlmModelEntry = {
+  readonly provider: LlmProvider;
+  readonly model: string;
 };
 
 /** Adapter response. Either plain text to send, and/or tool_use blocks to execute. */
@@ -74,6 +86,16 @@ export type LlmResponse = {
 
 /** Errors the adapter may return — never thrown, always a Result. */
 export type LlmError =
-  | { readonly code: 'LLM_API_ERROR'; readonly status?: number; readonly detail?: string }
+  | {
+      readonly code: 'LLM_API_ERROR';
+      readonly status?: number;
+      readonly detail?: string;
+      /** Provider error code when the body carries one (OpenAI `error.code`). */
+      readonly errorCode?: string;
+      /** Provider error type when the body carries one (OpenAI `error.type`). */
+      readonly errorType?: string;
+    }
   | { readonly code: 'LLM_NETWORK_ERROR'; readonly cause?: unknown }
-  | { readonly code: 'LLM_BAD_RESPONSE'; readonly detail?: string };
+  | { readonly code: 'LLM_BAD_RESPONSE'; readonly detail?: string }
+  /** The attempt did not finish within its per-attempt timeout and was aborted. */
+  | { readonly code: 'LLM_TIMEOUT'; readonly timeoutMs: number };
