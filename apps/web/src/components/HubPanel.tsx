@@ -3,6 +3,7 @@ import { isPeru } from '@/lib/phone';
 import type { FC } from 'react';
 import MessageCard from './MessageCard';
 import WarningBanner from './WarningBanner';
+import { formatAiTotals, summarizeAiUsage } from './message-meta';
 
 interface HubPanelProps {
   messages: MessageDTO[];
@@ -110,6 +111,7 @@ const HubPanel: FC<HubPanelProps> = ({
 }) => {
   const autoTrack = autoOn ? 'var(--green)' : 'var(--toggle-off)';
   const autoKnobLeft = autoOn ? '14px' : '2px';
+  const aiTotals = summarizeAiUsage(messages);
 
   return (
     <section
@@ -172,6 +174,36 @@ const HubPanel: FC<HubPanelProps> = ({
           <p style={{ margin: '4px 0 0 24px', fontSize: 12, color: 'var(--muted)' }}>
             Mensajes persistidos · la verdad de la base de datos.
           </p>
+          {messages.length > 0 && (
+            <p
+              title="Suma de las respuestas de IA entre los mensajes mostrados"
+              style={{
+                margin: '4px 0 0 24px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 12,
+                fontWeight: aiTotals.aiReplies > 0 ? 500 : 400,
+                color: aiTotals.aiReplies > 0 ? 'var(--ai-text)' : 'var(--muted)',
+              }}
+            >
+              <svg
+                aria-hidden="true"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ flex: '0 0 auto' }}
+              >
+                <path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z" />
+              </svg>
+              {formatAiTotals(aiTotals)}
+            </p>
+          )}
         </div>
 
         <div style={{ flex: 1 }} />

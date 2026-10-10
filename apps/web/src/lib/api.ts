@@ -16,14 +16,38 @@ export interface SignedPayload {
   wamid: string;
 }
 
+/** Who authored a message, as reported by GET /whatsapp-messages. */
+export type MessageAuthor = 'customer' | 'ai' | 'operator';
+
+/** Model and token usage of an AI-authored reply. */
+export interface AiUsageDTO {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  /** Part of outputTokens spent on reasoning; null when the provider did not report it. */
+  reasoningTokens: number | null;
+  totalTokens: number;
+  latencyMs: number;
+  llmCalls: number;
+  toolCalls: string[];
+  fallbackCount: number;
+}
+
 export interface MessageDTO {
   wamid: string;
+  /** Contact (customer) name for both directions — the RECIPIENT on outbound rows. */
   name: string | null;
+  /** Contact phone — sender on inbound rows, recipient on outbound rows. */
   phone: string;
   text: string | null;
   type: string;
   receivedAt: string;
   direction: string;
+  /** Absent on older backends: derive from `direction` (outbound → operator). */
+  author?: MessageAuthor;
+  /** AI usage when author = 'ai'; null or absent otherwise. */
+  ai?: AiUsageDTO | null;
 }
 
 export interface SendOutboundResult {

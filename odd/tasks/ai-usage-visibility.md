@@ -48,7 +48,7 @@ changes to SiviHub link branches (#14/#15), auth.
   webhook wiring `inboundWamid: wamid` inline).
 - [x] **T2 — Expose author and AI usage in `GET /whatsapp-messages`** (route: same backend
   writer as T1, separate work-unit commit).
-- [ ] **T3 — Console UI: sender line, AI vs operator bubbles, model + tokens badge, totals**
+- [x] **T3 — Console UI: sender line, AI vs operator bubbles, model + tokens badge, totals**
   (route: delegated web writer after T2's DTO is committed).
 
 ## Acceptance criteria
@@ -87,7 +87,17 @@ push/PR).
 - Parent spot check after inline webhook wiring: turbo typecheck 2/2; biome clean on the route;
   `test/webhooks` + `ai-reply-usage.int` + `ai-reply.int` → 4 files / 40 tests passed.
 
+- T3 RED: `message-meta.test.ts` failed (`Cannot find module './message-meta'`). GREEN: 17/17
+  via an ad hoc vitest config (the web package has no test runner). Web `tsc --noEmit` exit 0
+  (writer + parent); Biome clean on changed files; `next build` skipped because the running
+  `next dev` shares `.next`; console responds 200 after hot reload. AI card verified only by
+  helper tests until a real AI reply exists (0 `ai_reply_usage` rows at commit time).
+- Dev DB: migration 0009 applied by the parent (`[migrate] applied 0009_ai_reply_usage.sql`);
+  `GET /whatsapp-messages` returns `author` (customer/operator observed).
+
 ## Follow-ups
+
+- Add a `test` script + `vitest.config.ts` to `apps/web` so `message-meta.test.ts` runs in CI.
 
 - Register `0009_ai_reply_usage.sql` in `test/_helpers/test-db.ts` and delete the temporary
   `test/ai/ai-reply-usage-db.helper.ts` (two test files import it).
