@@ -76,6 +76,20 @@ selection by credential presence, token encryption, SiviHub link (PRs #14/#15).
   - Acceptance: focused tests RED→GREEN; full backend suite, typecheck, lint green; live check
     with a list whose first entry fails (e.g. retired model) still answers via the next one.
 
+- [x] **T5 — OpenAI provider in the model chain (`openai:gpt-6-luna`)** (route: delegated
+  writer — new OpenAI adapter + cross-provider chain + env + wiring + tests + runbook;
+  requested by the owner 2026-10-10 "quiero agregar el modelo chatgpt luna").
+  Verified (developers.openai.com/api/docs/models/gpt-6-luna.md): model id `gpt-6-luna`;
+  Chat Completions + Responses supported; function calling on Chat Completions only with
+  `reasoning_effort: "none"`; reasoning model; $0.10 / $0.50 per 1M tokens in/out.
+  Decision: Chat Completions via `fetch` (no new dependency), `reasoning_effort: "none"`;
+  `AI_MODEL` entries may carry a provider prefix (`openai:`), unprefixed = Gemini (back-compat);
+  `OPENAI_API_KEY` required only when an `openai:` entry is configured (fail fast at startup);
+  same fallback classification, timeout and `llm_model_fallback` logging across providers.
+  Security note: the owner pasted an OpenAI key in chat — treated as compromised; never used.
+  - Acceptance: focused tests RED→GREEN; full backend suite, typecheck, lint green; live check
+    pending the owner's NEW key.
+
 ## Delivery
 
 Strategy: `ask-on-risk` (default). Forecast was ≈ 250 authored lines; actual ≈ 1,010
@@ -115,6 +129,16 @@ Chain strategy is not needed unless the owner wants the PR split.
   stub) with `AI_MODEL=gemini-2.5-flash,gemini-3.5-flash-lite,gemini-3.5-flash`:
   `llm_model_fallback` warn (from 2.5-flash, status 404) → 3.5-flash-lite answered → flow
   reached `SEND_FAILED` from the stub as expected.
+- T5 RED: new files `ERR_MODULE_NOT_FOUND`, 12 new env tests failing. GREEN: 78/78 on the 3
+  files; focused `test/ai test/config` 11 files / 160 tests (parent re-run 160/160); full
+  backend 44 files / 512 tests; turbo typecheck 2/2 (+ ad hoc tsconfig over test files: 0
+  diagnostics); lint 0 errors (7 baseline warnings). Design: cross-provider
+  `createModelChainLlm` wraps single-model Gemini adapters (Gemini/T3/T4 code untouched) and a
+  fetch-based `createOpenAiAdapter` (Chat Completions, `reasoning_effort: "none"`, system prompt
+  as `developer`, synthesized tool-call ids, OpenAI `error.message` dropped). Owner's dev server
+  hot-reloaded T5 and stayed healthy with a Gemini-only `AI_MODEL`. Pending: live OpenAI check
+  with a NEW key; open risk — Gemini 3 receiving an unsigned OpenAI-produced function call after
+  an OpenAI follow-up failure is unverified (chain stops on 400).
 - Native review: slice `a819491..0de065b` → risk `medium` (`configuration_change` on
   package.json), `review_due` = `slice_budget_reached`; owner consent **granted**; lens
   `review-reliability` → **approved**; acknowledged, lineage `review-164cd12c98fef37d`

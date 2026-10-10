@@ -9,6 +9,8 @@
  * - createGeminiAdapter(apiKey, model | models, _testGenerateFn?, options?): Gemini SDK
  *   implementation (ACTIVE default) with an ordered model fallback chain and a
  *   per-attempt timeout
+ * - FALLBACK_HTTP_STATUSES / orderForHistory: the fallback classification and the
+ *   tool-use model affinity, shared with the cross-provider chain (model-chain.ts)
  * - createFakeLlmAdapter(script?): test double with calls[] and queueResponse()
  *
  * Security invariants:
@@ -316,7 +318,9 @@ export const DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS = 20_000;
  * Anything else — notably 400/401/403 (bad request, invalid or unauthorized key) —
  * is deterministic: every model would fail the same way, so it returns at once.
  */
-const FALLBACK_HTTP_STATUSES: ReadonlySet<number> = new Set([404, 408, 429, 500, 502, 503, 504]);
+export const FALLBACK_HTTP_STATUSES: ReadonlySet<number> = new Set([
+  404, 408, 429, 500, 502, 503, 504,
+]);
 
 /** Why one model attempt failed. */
 export type GeminiAttemptFailureReason = 'http_error' | 'timeout' | 'network_error';
@@ -451,7 +455,7 @@ function normalizeModels(model: string | readonly string[]): string[] {
  * stripped, never replaced by dummy values); affinity keeps reasoning continuity
  * and avoids relying on that cross-model path while the producer is healthy.
  */
-function orderForHistory(
+export function orderForHistory(
   models: readonly string[],
   messages: readonly LlmMessage[],
 ): readonly string[] {
