@@ -75,6 +75,39 @@ export type LlmModelEntry = {
   readonly model: string;
 };
 
+/** The chain label of an entry: `<provider>:<model>` (same format as producerModel). */
+export const modelEntryKey = (entry: LlmModelEntry): string => `${entry.provider}:${entry.model}`;
+
+/**
+ * Normalized token usage of ONE completion call, identical across providers.
+ * Totals are what the provider bills: reasoning/thinking tokens count as output
+ * and cached prompt tokens count as input (both are breakdowns, not additions).
+ */
+export type LlmUsage = {
+  /** Every input token: prompt, history and tool results (cached ones included). */
+  readonly inputTokens: number;
+  /** Every generated token, reasoning/thinking tokens included. */
+  readonly outputTokens: number;
+  /** Part of outputTokens spent on reasoning; absent when the provider did not report it. */
+  readonly reasoningTokens?: number;
+  /** Part of inputTokens served from the provider cache; absent when not reported. */
+  readonly cachedInputTokens?: number;
+  /** Provider-reported total; inputTokens + outputTokens when the provider omits it. */
+  readonly totalTokens: number;
+};
+
+/** Why one model attempt failed. */
+export type LlmAttemptFailureReason = 'http_error' | 'timeout' | 'network_error' | 'bad_response';
+
+/** One failed model attempt. Safe to log/persist: no key, prompt or customer text. */
+export type LlmAttemptSummary = {
+  /** `<provider>:<model>` */
+  readonly model: string;
+  readonly reason: LlmAttemptFailureReason;
+  /** HTTP status when the provider answered with one; null otherwise. */
+  readonly status: number | null;
+};
+
 /** Adapter response. Either plain text to send, and/or tool_use blocks to execute. */
 export type LlmResponse = {
   /** Assistant prose; may be null on a pure tool turn. */
@@ -82,6 +115,15 @@ export type LlmResponse = {
   /** Empty array = no tools requested this turn. */
   readonly toolUses: readonly ToolUseBlock[];
   readonly stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'other';
+  /** Token usage of this call; absent when the provider reported none. */
+  readonly usage?: LlmUsage;
+  /** The provider + model that produced this response (`<provider>:<model>` = modelEntryKey). */
+  readonly answeredBy?: LlmModelEntry;
+  /**
+   * Set by the model chain: the failed attempts that ran before `answeredBy`
+   * answered this call, in order (empty when the first entry answered).
+   */
+  readonly fallbackAttempts?: readonly LlmAttemptSummary[];
 };
 
 /** Errors the adapter may return — never thrown, always a Result. */

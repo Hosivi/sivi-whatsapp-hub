@@ -33,6 +33,7 @@ import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
 import type { LlmAdapter } from './llm-adapter.js';
 import type { LlmError, LlmMessage, LlmResponse, LlmTool, ToolUseBlock } from './llm-types.js';
+import { buildLlmUsage } from './llm-usage.js';
 
 export const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 
@@ -211,10 +212,36 @@ function mapOpenAiResponse(payload: unknown, model: string): Result<LlmResponse,
     });
   }
 
+  const usage = mapOpenAiUsage(isRecord(payload) ? payload.usage : undefined);
   return ok({
     text: typeof message.content === 'string' ? message.content : null,
     toolUses,
     stopReason: mapStopReason(choice.finish_reason, toolUses.length > 0),
+    ...(usage !== undefined ? { usage } : {}),
+    answeredBy: { provider: 'openai', model },
+  });
+}
+
+/**
+ * Maps the chat.completion `usage` object onto the neutral LlmUsage. Fields per
+ * https://developers.openai.com/api/docs/api-reference/chat/create (response
+ * `usage`): `prompt_tokens`, `completion_tokens` (reasoning tokens included),
+ * `total_tokens`, `completion_tokens_details.reasoning_tokens` and
+ * `prompt_tokens_details.cached_tokens` (both breakdowns, not additions).
+ * Absent or malformed usage → undefined; never throws.
+ */
+function mapOpenAiUsage(usage: unknown): LlmResponse['usage'] {
+  if (!isRecord(usage)) return undefined;
+  const completionDetails = isRecord(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
+    : {};
+  const promptDetails = isRecord(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {};
+  return buildLlmUsage({
+    input: [usage.prompt_tokens],
+    output: [usage.completion_tokens],
+    reasoning: completionDetails.reasoning_tokens,
+    cachedInput: promptDetails.cached_tokens,
+    total: usage.total_tokens,
   });
 }
 

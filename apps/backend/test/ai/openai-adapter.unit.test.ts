@@ -268,7 +268,12 @@ describe('createOpenAiAdapter — response mapping', () => {
     const result = await adapter.complete(SYS, MSGS, []);
     expect(result).toEqual({
       ok: true,
-      value: { text: '¡Hola! Atendemos de 9 a 18.', toolUses: [], stopReason: 'end_turn' },
+      value: {
+        text: '¡Hola! Atendemos de 9 a 18.',
+        toolUses: [],
+        stopReason: 'end_turn',
+        answeredBy: { provider: 'openai', model: 'gpt-6-luna' },
+      },
     });
   });
 
@@ -312,6 +317,7 @@ describe('createOpenAiAdapter — response mapping', () => {
           },
         ],
         stopReason: 'tool_use',
+        answeredBy: { provider: 'openai', model: 'gpt-6-luna' },
       },
     });
   });
@@ -492,4 +498,60 @@ describe('createOpenAiAdapter — failures (Result, never thrown)', () => {
       expect(message).not.toContain(KEY);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Token usage (ai-usage-visibility T1)
+// ---------------------------------------------------------------------------
+
+describe('createOpenAiAdapter — token usage', () => {
+  const replyWithUsage = (usage: unknown): FetchOutcome => ({
+    kind: 'json',
+    status: 200,
+    body: { ...completion({ content: 'hola' }), ...(usage === undefined ? {} : { usage }) },
+  });
+
+  it('maps usage incl. reasoning and cached-prompt details', async () => {
+    const { adapter } = adapterWith([
+      replyWithUsage({
+        prompt_tokens: 200,
+        completion_tokens: 50,
+        total_tokens: 250,
+        completion_tokens_details: { reasoning_tokens: 20 },
+        prompt_tokens_details: { cached_tokens: 64 },
+      }),
+    ]);
+    const result = await adapter.complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toStrictEqual({
+      inputTokens: 200,
+      outputTokens: 50,
+      reasoningTokens: 20,
+      cachedInputTokens: 64,
+      totalTokens: 250,
+    });
+    expect(result.value.answeredBy).toStrictEqual({ provider: 'openai', model: 'gpt-6-luna' });
+  });
+
+  it('no usage object → usage is undefined (never throws)', async () => {
+    const { adapter } = adapterWith([replyWithUsage(undefined)]);
+    const result = await adapter.complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toBeUndefined();
+    expect(result.value.text).toBe('hola');
+  });
+
+  it('partial usage (no details, no total) → details omitted, total = prompt + completion', async () => {
+    const { adapter } = adapterWith([replyWithUsage({ prompt_tokens: 9, completion_tokens: 4 })]);
+    const result = await adapter.complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toStrictEqual({ inputTokens: 9, outputTokens: 4, totalTokens: 13 });
+  });
+
+  it('malformed usage (no numeric count) → usage is undefined', async () => {
+    const { adapter } = adapterWith([replyWithUsage({ prompt_tokens: null, total_tokens: '7' })]);
+    const result = await adapter.complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toBeUndefined();
+  });
 });

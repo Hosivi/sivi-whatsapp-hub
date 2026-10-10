@@ -8,6 +8,8 @@
  * 4. On success: open a second short write transaction:
  *    - upsertContactTx to resolve or create the recipient contact
  *    - INSERT whatsapp_messages with direction='outbound'
+ *    - optional caller hook (options.persistInTx) on the same tx — e.g. the AI
+ *      reply's ai_reply_usage row — so both rows commit or roll back together
  * 5. Return ok({ wamid, status }).
  *
  * Hard invariants:
@@ -18,6 +20,7 @@
  */
 
 import { sql as rawSql } from 'drizzle-orm';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type { AppDeps } from '../app.js';
 import { upsertContactTx } from '../contacts/contacts.repository.js';
 import { normalizePhoneE164 } from '../contacts/phone-e164.js';
@@ -39,6 +42,27 @@ export type SendInput = {
 export type SendOk = {
   readonly wamid: string;
   readonly status: string;
+};
+
+/** What the persist transaction just wrote for the outbound message. */
+export type PersistedOutbound = {
+  readonly wamid: string;
+  readonly contactId: string;
+};
+
+/**
+ * Extra write that must commit atomically with the outbound message row. Runs on
+ * the same tenant-scoped tx, right after the message INSERT; a throw rolls back
+ * both rows and the send returns DB_ERROR (the message itself was already sent).
+ */
+export type OutboundPersistHook = (
+  tx: PostgresJsDatabase,
+  persisted: PersistedOutbound,
+) => Promise<void>;
+
+export type SendOptions = {
+  /** Optional same-transaction write (e.g. the AI reply's usage row). */
+  readonly persistInTx?: OutboundPersistHook;
 };
 
 // ---------------------------------------------------------------------------
@@ -98,11 +122,15 @@ export const resolveActiveAccount = async (
  *
  * Pure domain service — returns Result<SendOk, WhatsappSendError>, never throws.
  * All infrastructure throws are caught at the appropriate boundary.
+ *
+ * `options.persistInTx` (optional) runs inside the persist transaction after the
+ * message INSERT — callers without it (manual POST /whatsapp-send) are unchanged.
  */
 export const sendWhatsappText = async (
   deps: AppDeps,
   tenantId: string,
   input: SendInput,
+  options: SendOptions = {},
 ): Promise<Result<SendOk, WhatsappSendError>> => {
   // 1) Resolve the single active account (TX#1 — short read tx).
   const accountResult = await resolveActiveAccount(deps.db.withTenant, tenantId);
@@ -155,6 +183,9 @@ export const sendWhatsappText = async (
            'outbound')
         ON CONFLICT (wamid) DO NOTHING
       `);
+      if (options.persistInTx !== undefined) {
+        await options.persistInTx(tx, { wamid, contactId: contact.value.id });
+      }
     });
   } catch (cause) {
     // Send already happened — surface DB_ERROR; never roll back the send.

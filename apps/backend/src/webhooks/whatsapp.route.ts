@@ -76,11 +76,15 @@ export function createWhatsappWebhookRoute(deps?: AppDeps): Hono {
 
     // Ack-fast: fire AI reply in the background — NEVER await before returning 200.
     // runAiReply returns Result (never throws); .catch logs any unexpected infrastructure failure.
-    const { tenantId, contactId, fromPhoneE164, text } = result.value;
+    const { tenantId, contactId, fromPhoneE164, text, wamid } = result.value;
     if (text !== null) {
-      void runAiReply(deps, { tenantId, contactId, fromPhoneE164, text }).catch((cause) =>
-        deps.logger.error({ cause }, '[ai-reply] unhandled rejection'),
-      );
+      void runAiReply(deps, {
+        tenantId,
+        contactId,
+        fromPhoneE164,
+        text,
+        inboundWamid: wamid,
+      }).catch((cause) => deps.logger.error({ cause }, '[ai-reply] unhandled rejection'));
     }
 
     return c.text('ok', 200);

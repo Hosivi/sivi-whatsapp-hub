@@ -12,7 +12,10 @@
  * - logs every fallback as warn `llm_model_fallback` { fromModel, toModel, status,
  *   reason } with `provider:model` labels — never keys, prompts or customer text;
  * - when every attempt fails, returns LLM_NETWORK_ERROR whose cause is a
- *   ModelChainFailure { lastError, attempts } (the T4 GeminiChainFailure shape).
+ *   ModelChainFailure { lastError, attempts } (the T4 GeminiChainFailure shape);
+ * - on success, stamps the response with `answeredBy` (the entry that answered)
+ *   and `fallbackAttempts` (the failed attempts before it, possibly empty); the
+ *   answering adapter's `usage` passes through unchanged.
  *
  * Each entry is served by a single-model provider adapter built once at wiring
  * time by `deps.providers[provider](model, { timeoutMs })`; that adapter owns its
@@ -30,22 +33,24 @@
 import { err, ok } from '../shared/result.js';
 import { FALLBACK_HTTP_STATUSES, orderForHistory } from './llm-adapter.js';
 import type { GeminiChainFailure, LlmAdapter } from './llm-adapter.js';
-import type { LlmError, LlmModelEntry, LlmProvider, LlmResponse } from './llm-types.js';
+import { modelEntryKey } from './llm-types.js';
+import type {
+  LlmAttemptFailureReason,
+  LlmAttemptSummary,
+  LlmError,
+  LlmModelEntry,
+  LlmProvider,
+  LlmResponse,
+} from './llm-types.js';
 
 /** Per-attempt timeout used when the caller does not inject one. */
 export const DEFAULT_MODEL_CHAIN_TIMEOUT_MS = 20_000;
 
 /** Why one model attempt failed. */
-export type ModelAttemptFailureReason = 'http_error' | 'timeout' | 'network_error' | 'bad_response';
+export type ModelAttemptFailureReason = LlmAttemptFailureReason;
 
 /** One failed attempt of the chain. Safe to log: no key, prompt or customer text. */
-export type ModelAttemptSummary = {
-  /** `<provider>:<model>` */
-  readonly model: string;
-  readonly reason: ModelAttemptFailureReason;
-  /** HTTP status when the provider answered with one; null otherwise. */
-  readonly status: number | null;
-};
+export type ModelAttemptSummary = LlmAttemptSummary;
 
 /** `cause` of the LLM_NETWORK_ERROR returned when the chain ends without an answer. */
 export type ModelChainFailure = {
@@ -83,8 +88,8 @@ export type ModelChainDeps = {
   readonly timeoutMs?: number;
 };
 
-/** The chain label of an entry: `<provider>:<model>`. */
-export const modelEntryKey = (entry: LlmModelEntry): string => `${entry.provider}:${entry.model}`;
+/** The chain label of an entry: `<provider>:<model>` (re-exported; defined in llm-types). */
+export { modelEntryKey };
 
 type ClassifiedFailure = {
   readonly reason: ModelAttemptFailureReason;
@@ -155,7 +160,10 @@ export const createModelChainLlm = (
   deps: ModelChainDeps,
 ): LlmAdapter => {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_MODEL_CHAIN_TIMEOUT_MS;
-  const adapters = new Map<string, LlmAdapter>();
+  const adapters = new Map<
+    string,
+    { readonly entry: LlmModelEntry; readonly adapter: LlmAdapter }
+  >();
   for (const entry of entries) {
     const key = modelEntryKey(entry);
     if (adapters.has(key)) continue; // duplicates: first occurrence wins
@@ -163,7 +171,10 @@ export const createModelChainLlm = (
     if (factory === undefined) {
       throw new Error(`[model-chain] no adapter factory for provider "${entry.provider}"`);
     }
-    adapters.set(key, factory(entry.model, { timeoutMs }));
+    adapters.set(key, {
+      entry: { provider: entry.provider, model: entry.model },
+      adapter: factory(entry.model, { timeoutMs }),
+    });
   }
   if (adapters.size === 0) {
     throw new Error('[model-chain] createModelChainLlm requires at least one model');
@@ -178,13 +189,21 @@ export const createModelChainLlm = (
       let lastError: unknown;
 
       for (const [index, key] of chain.entries()) {
-        const adapter = adapters.get(key);
-        if (adapter === undefined) continue;
+        const served = adapters.get(key);
+        if (served === undefined) continue;
 
         let failure: ClassifiedFailure;
         try {
-          const result = await adapter.complete(system, messages, tools);
-          if (result.ok) return ok(stampProducer(result.value, key));
+          const result = await served.adapter.complete(system, messages, tools);
+          if (result.ok) {
+            // Success report: the chain entry is the authoritative answering identity;
+            // the attempts that failed before it are reported so callers can account them.
+            return ok({
+              ...stampProducer(result.value, key),
+              answeredBy: served.entry,
+              fallbackAttempts: [...attempts],
+            });
+          }
           failure = classifyFailure(result.error);
         } catch (cause) {
           // Adapters must not throw; contain it as a network error anyway.

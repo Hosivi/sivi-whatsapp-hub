@@ -568,3 +568,72 @@ describe('createModelChainLlm — wiring', () => {
     ).toThrow(/openai/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Success report: answering entry, prior fallback attempts, usage (ai-usage-visibility T1)
+// ---------------------------------------------------------------------------
+
+describe('createModelChainLlm — success report', () => {
+  it('first entry answers → answeredBy is that entry and there are no fallback attempts', async () => {
+    const h = makeHarness();
+    const result = await h.build(OWNER_CHAIN).complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.answeredBy).toStrictEqual({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash-lite',
+    });
+    expect(result.value.fallbackAttempts).toStrictEqual([]);
+  });
+
+  it('success after fallbacks → answeredBy is the answering entry; prior attempts are reported in order', async () => {
+    const h = makeHarness({
+      gemini: { 'gemini-3.5-flash-lite': [{ kind: 'status', status: 503 }] },
+      openai: { 'gpt-6-luna': [{ kind: 'status', status: 429, code: 'insufficient_quota' }] },
+    });
+    const result = await h.build(OWNER_CHAIN).complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.text).toBe('from gemini:gemini-3.5-flash');
+    expect(result.value.answeredBy).toStrictEqual({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+    });
+    expect(result.value.fallbackAttempts).toStrictEqual([
+      { model: 'gemini:gemini-3.5-flash-lite', reason: 'http_error', status: 503 },
+      { model: 'openai:gpt-6-luna', reason: 'http_error', status: 429 },
+    ]);
+  });
+
+  it("passes the answering adapter's usage through unchanged", async () => {
+    const usage = { inputTokens: 11, outputTokens: 7, reasoningTokens: 2, totalTokens: 18 };
+    const failing: LlmAdapter = {
+      complete: async () => err({ code: 'LLM_API_ERROR', status: 500 }),
+    };
+    const answering: LlmAdapter = {
+      complete: async () => ({
+        ok: true,
+        value: { text: 'hola', toolUses: [], stopReason: 'end_turn', usage },
+      }),
+    };
+    const chain = createModelChainLlm([gemini('g'), openai('o')], {
+      providers: { gemini: () => failing, openai: () => answering },
+    });
+    const result = await chain.complete(SYS, MSGS, []);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.value.usage).toStrictEqual(usage);
+    expect(result.value.answeredBy).toStrictEqual({ provider: 'openai', model: 'o' });
+    expect(result.value.fallbackAttempts).toStrictEqual([
+      { model: 'gemini:g', reason: 'http_error', status: 500 },
+    ]);
+  });
+
+  it('the all-failed error shape is unchanged (no success fields leak into failures)', async () => {
+    const h = makeHarness({
+      gemini: { 'gemini-3.5-flash-lite': [{ kind: 'status', status: 401 }] },
+    });
+    const result = await h.build(OWNER_CHAIN).complete(SYS, MSGS, []);
+    expect(result.ok).toBe(false);
+    expect(chainFailureOf(result).attempts).toEqual([
+      { model: 'gemini:gemini-3.5-flash-lite', reason: 'http_error', status: 401 },
+    ]);
+  });
+});

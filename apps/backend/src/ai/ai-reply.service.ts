@@ -27,7 +27,11 @@ import { err, ok } from '../shared/result.js';
 import type { Result } from '../shared/result.js';
 import { getConversationHistory } from '../whatsapp-messages/whatsapp-messages.repository.js';
 import { sendWhatsappText } from '../whatsapp-send/whatsapp-send.service.js';
+import { insertAiReplyUsageTx, persistAiReplyUsage } from './ai-reply-usage.repository.js';
+import type { AiReplyUsageRecord } from './ai-reply-usage.repository.js';
 import type { LlmMessage } from './llm-types.js';
+import { EMPTY_USAGE_TALLY, tallyLlmCall } from './llm-usage.js';
+import type { AiReplyUsageTally } from './llm-usage.js';
 import { buildTiendaGeneralSystemPrompt } from './system-prompt.js';
 import { getTenantAiConfig } from './tenant-ai-config.repository.js';
 import { REGISTRY, executeTool, toLlmTool } from './tool-registry.js';
@@ -82,6 +86,8 @@ export type AiReplyInput = {
   readonly contactId: string;
   readonly fromPhoneE164: string;
   readonly text: string;
+  /** wamid of the inbound message being answered; stored on the usage row when known. */
+  readonly inboundWamid?: string;
 };
 
 export type AiReplyError =
@@ -96,6 +102,77 @@ export type AiReplyOk = {
   readonly wamid: string;
   readonly toolCalls: string[];
 };
+
+// ---------------------------------------------------------------------------
+// Usage accounting helpers (counts and labels only — never prompts or customer text)
+// ---------------------------------------------------------------------------
+
+/** provider/model label when no LLM response reported its answering model. */
+const UNKNOWN_MODEL_LABEL = 'unknown';
+
+const elapsedMs = (startedAt: number): number =>
+  Math.max(0, Math.round(performance.now() - startedAt));
+
+/** Safe-to-log usage fields for ai_reply_sent / ai_reply_failed / ai_tool_limit_reached. */
+const usageLogFields = (tally: AiReplyUsageTally) =>
+  tally.llmCalls === 0
+    ? {}
+    : {
+        provider: tally.answeredBy?.provider ?? UNKNOWN_MODEL_LABEL,
+        model: tally.answeredBy?.model ?? UNKNOWN_MODEL_LABEL,
+        modelsUsed: tally.modelsUsed,
+        inputTokens: tally.inputTokens,
+        outputTokens: tally.outputTokens,
+        reasoningTokens: tally.reasoningTokens,
+        cachedInputTokens: tally.cachedInputTokens,
+        totalTokens: tally.totalTokens,
+        llmCalls: tally.llmCalls,
+        fallbackCount: tally.fallbackAttempts.length,
+      };
+
+function toUsageRecord(
+  input: AiReplyInput,
+  tally: AiReplyUsageTally,
+  toolCalls: readonly string[],
+  outcome: Pick<AiReplyUsageRecord, 'status' | 'outboundWamid' | 'latencyMs'>,
+): AiReplyUsageRecord {
+  return {
+    contactId: input.contactId,
+    inboundWamid: input.inboundWamid ?? null,
+    outboundWamid: outcome.outboundWamid,
+    status: outcome.status,
+    provider: tally.answeredBy?.provider ?? UNKNOWN_MODEL_LABEL,
+    model: tally.answeredBy?.model ?? UNKNOWN_MODEL_LABEL,
+    inputTokens: tally.inputTokens,
+    outputTokens: tally.outputTokens,
+    reasoningTokens: tally.reasoningTokens,
+    cachedInputTokens: tally.cachedInputTokens,
+    totalTokens: tally.totalTokens,
+    llmCalls: tally.llmCalls,
+    toolCalls: [...toolCalls],
+    fallbackAttempts: tally.fallbackAttempts,
+    latencyMs: outcome.latencyMs,
+  };
+}
+
+/**
+ * The send failed after the LLM ran: keep the spent tokens in a 'send_failed' row
+ * (own transaction, no outbound wamid). Fail-soft — a failure is logged, never thrown.
+ */
+async function persistSendFailedUsage(
+  deps: AppDeps,
+  tenantId: string,
+  record: AiReplyUsageRecord,
+): Promise<void> {
+  try {
+    const outcome = await persistAiReplyUsage(deps.db.withTenant, tenantId, record);
+    if (outcome === 'table_missing') {
+      deps.logger.error({ tenantId }, 'ai_reply_usage_not_persisted reason=TABLE_MISSING');
+    }
+  } catch (cause) {
+    deps.logger.error({ tenantId, cause }, 'ai_reply_usage_not_persisted reason=DB_ERROR');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // runAiReply — orchestrator
@@ -117,8 +194,16 @@ export type AiReplyOk = {
  *    - Exhausted → warn log, err(LLM_FAILED), NO reply.
  * 8. sendWhatsappText → wamid → ok.
  *
+ * Usage accounting: token usage, answering model and fallback attempts of every
+ * successful LLM call are tallied. On a successful send ONE 'sent' ai_reply_usage
+ * row is written in the SAME transaction as the outbound message row; when the LLM
+ * ran but the send failed, a 'send_failed' row keeps the spent tokens. No row when
+ * no LLM call completed. A missing table (0009 not applied) is logged, never fatal.
+ *
  * All errors returned as Result — NEVER thrown to caller.
- * Pino audits at each gate: ai_reply_skipped, ai_tool_limit_reached, ai_reply_sent, ai_reply_failed.
+ * Pino audits at each gate: ai_reply_skipped, ai_tool_limit_reached, ai_reply_sent,
+ * ai_reply_failed (with provider, model and token totals once an LLM call completed),
+ * ai_reply_usage_not_persisted.
  *
  * @param deps  - Full AppDeps (db, llm, meta, logger, env).
  * @param input - { tenantId, contactId, fromPhoneE164, text }.
@@ -128,6 +213,8 @@ export async function runAiReply(
   input: AiReplyInput,
 ): Promise<Result<AiReplyOk, AiReplyError>> {
   const { tenantId, contactId, fromPhoneE164 } = input;
+  // Wall-clock latency of the reply: from here to send completion (or failure).
+  const startedAt = performance.now();
 
   try {
     // Step 1: Load tenant AI config (pre-load; getBusinessInfo tool reads from ctx, no 2nd query).
@@ -164,6 +251,8 @@ export async function runAiReply(
     let messages: LlmMessage[] = history;
     const allToolCalls: string[] = [];
     const MAX_ITERATIONS = 5;
+    // Usage of every successful LLM call of this reply (tokens, models, fallbacks).
+    let tally: AiReplyUsageTally = EMPTY_USAGE_TALLY;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       // Call LLM.
@@ -171,38 +260,82 @@ export async function runAiReply(
       try {
         llmResult = await deps.llm.complete(system, messages, llmTools);
       } catch (cause) {
-        deps.logger.error({ tenantId, cause }, 'ai_reply_failed LLM threw unexpectedly');
+        deps.logger.error(
+          { tenantId, cause, ...usageLogFields(tally) },
+          'ai_reply_failed LLM threw unexpectedly',
+        );
         return err({ code: 'LLM_FAILED', cause } as const);
       }
 
       if (!llmResult.ok) {
         deps.logger.error(
-          { tenantId, error: llmResult.error },
+          { tenantId, error: llmResult.error, ...usageLogFields(tally) },
           'ai_reply_failed reason=LLM_FAILED',
         );
         return err({ code: 'LLM_FAILED', cause: llmResult.error } as const);
       }
 
+      tally = tallyLlmCall(tally, llmResult.value);
       const { text, toolUses } = llmResult.value;
 
       // No tool uses → text response.
       if (toolUses.length === 0) {
         const replyText = text ?? '';
-        const sendResult = await sendWhatsappText(deps, tenantId, {
-          to: fromPhoneE164,
-          text: replyText,
-        });
+        const replyTally = tally;
+        const sendResult = await sendWhatsappText(
+          deps,
+          tenantId,
+          { to: fromPhoneE164, text: replyText },
+          {
+            // Same transaction as the outbound message row: both commit or neither.
+            persistInTx: async (tx, { wamid }) => {
+              const record = toUsageRecord(input, replyTally, allToolCalls, {
+                status: 'sent',
+                outboundWamid: wamid,
+                latencyMs: elapsedMs(startedAt),
+              });
+              const outcome = await insertAiReplyUsageTx(tx, tenantId, record);
+              if (outcome === 'table_missing') {
+                // Migration 0009 not applied yet: keep the message row, report the gap.
+                deps.logger.error(
+                  { tenantId, wamid },
+                  'ai_reply_usage_not_persisted reason=TABLE_MISSING',
+                );
+              }
+            },
+          },
+        );
 
         if (!sendResult.ok) {
           deps.logger.error(
-            { tenantId, error: sendResult.error },
+            { tenantId, error: sendResult.error, ...usageLogFields(tally) },
             'ai_reply_failed reason=SEND_FAILED',
           );
+          // DB_ERROR = the reply WAS delivered but its persist tx rolled back, so it
+          // is not a failed send; every other code means nothing reached the customer.
+          if (sendResult.error.code !== 'DB_ERROR') {
+            await persistSendFailedUsage(
+              deps,
+              tenantId,
+              toUsageRecord(input, tally, allToolCalls, {
+                status: 'send_failed',
+                outboundWamid: null,
+                latencyMs: elapsedMs(startedAt),
+              }),
+            );
+          }
           return err({ code: 'SEND_FAILED', cause: sendResult.error } as const);
         }
 
         deps.logger.info(
-          { tenantId, wamid: sendResult.value.wamid, toolCalls: allToolCalls, iteration },
+          {
+            tenantId,
+            wamid: sendResult.value.wamid,
+            toolCalls: allToolCalls,
+            iteration,
+            ...usageLogFields(tally),
+            latencyMs: elapsedMs(startedAt),
+          },
           'ai_reply_sent',
         );
         return ok({ wamid: sendResult.value.wamid, toolCalls: allToolCalls });
@@ -225,7 +358,13 @@ export async function runAiReply(
 
     // Max iterations exhausted — no text response received.
     deps.logger.warn(
-      { tenantId, contactId, iterations: MAX_ITERATIONS, toolCalls: allToolCalls },
+      {
+        tenantId,
+        contactId,
+        iterations: MAX_ITERATIONS,
+        toolCalls: allToolCalls,
+        ...usageLogFields(tally),
+      },
       'ai_tool_limit_reached',
     );
     return err({ code: 'LLM_FAILED' } as const);
