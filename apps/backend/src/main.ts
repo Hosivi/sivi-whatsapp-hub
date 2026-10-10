@@ -17,6 +17,8 @@
 import { serve } from '@hono/node-server';
 import pino from 'pino';
 import { createFakeLlmAdapter, createGeminiAdapter } from './ai/llm-adapter.js';
+import { createModelChainLlm } from './ai/model-chain.js';
+import { createOpenAiAdapter } from './ai/openai-adapter.js';
 import { buildApp } from './app.js';
 import { loadEnv } from './config/env.js';
 import { createDbClient } from './db/client.js';
@@ -49,11 +51,24 @@ const meta =
       : createMetaClient(env.WHATSAPP_META_API_VERSION);
 
 // LLM adapter selection:
-//   dev (ENABLE_DEV_ENDPOINTS) → fake adapter (no Gemini calls, safe for local dev)
-//   default                    → real Gemini adapter (requires GEMINI_API_KEY)
+//   dev (ENABLE_DEV_ENDPOINTS) → fake adapter (no LLM calls, safe for local dev)
+//   default                    → ordered cross-provider chain over AI_MODEL_ENTRIES
+//                                (gemini → GEMINI_API_KEY, openai: → OPENAI_API_KEY,
+//                                which loadEnv() requires when such an entry exists),
+//                                bounded by AI_TIMEOUT_MS per attempt; fallbacks are
+//                                logged as warn llm_model_fallback (provider:model).
 const llm = env.ENABLE_DEV_ENDPOINTS
   ? createFakeLlmAdapter()
-  : createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL);
+  : createModelChainLlm(env.AI_MODEL_ENTRIES, {
+      providers: {
+        gemini: (model, { timeoutMs }) =>
+          createGeminiAdapter(env.GEMINI_API_KEY ?? '', model, undefined, { timeoutMs }),
+        openai: (model, { timeoutMs }) =>
+          createOpenAiAdapter(env.OPENAI_API_KEY ?? '', model, { timeoutMs }),
+      },
+      timeoutMs: env.AI_TIMEOUT_MS,
+      logger,
+    });
 
 const app = buildApp({ db, env, meta, llm, logger });
 

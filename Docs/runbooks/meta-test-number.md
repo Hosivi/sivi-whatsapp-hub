@@ -34,7 +34,9 @@
    Tiene que ser un **móvil peruano `+51 9XXXXXXXX`**: el Hub normaliza el remitente con
    `normalizePhoneE164` (`apps/backend/src/contacts/phone-e164.ts`), que solo acepta ese formato.
    Cualquier otro número se descarta con `INVALID_PHONE`.
-3. **Token de System User.** El token temporal de la consola vence en menos de 24 h. Creá uno
+3. **Token de System User.** El token temporal de la consola vence en pocas horas (en la prueba
+   del 2026-10-10 duró unas 2 h) y a partir de ahí Meta rechaza los envíos. El token de System
+   User no tiene ese problema. Creá uno
    permanente: Configuración del negocio → **Usuarios del sistema** → generá un token con los
    permisos `whatsapp_business_messaging` y `whatsapp_business_management`, y asignale como
    activos **la app** y **la WABA**.
@@ -72,6 +74,14 @@ WHATSAPP_META_API_VERSION=v21.0
 
 # --- IA ---
 GEMINI_API_KEY=<tu-api-key-de-gemini>
+# Modelos en orden: usa el primero y, si falla por algo transitorio, pasa al siguiente.
+# Prefijo opcional <proveedor>:<modelo> (gemini | openai); sin prefijo = gemini.
+AI_MODEL=gemini-3.5-flash-lite,gemini-3.5-flash
+# Con OpenAI en la cadena, descomentá estas dos líneas (sin la key, el backend no arranca):
+# AI_MODEL=gemini-3.5-flash-lite,openai:gpt-6-luna,gemini-3.5-flash
+# OPENAI_API_KEY=<tu-api-key-de-openai>
+# Opcional: tiempo máximo por intento en ms (default 20000). Si se cumple, pasa al siguiente.
+AI_TIMEOUT_MS=20000
 
 # --- Solo para configure:meta (credenciales del número de prueba) ---
 META_PHONE_NUMBER_ID=<phone-number-id-del-numero-de-prueba>
@@ -88,6 +98,23 @@ META_ACCESS_TOKEN=<token-del-system-user>
   `ENABLE_DEV_ENDPOINTS=true` y secretos de WhatsApp de mentira para toda variable que no
   esté definida.
 - `configure:meta` toma las credenciales **solo** del entorno; nunca las pases como argumentos.
+- **No uses `gemini-2.5-*`** en `AI_MODEL`: para API keys nuevas responden `404` ("no longer
+  available to new users"). Si `AI_MODEL` no está definida, el default es
+  `gemini-3.5-flash-lite,gemini-3.5-flash`. Un solo modelo también vale.
+- **Modelos de OpenAI:** agregalos con el prefijo `openai:`, por ejemplo
+  `AI_MODEL=gemini-3.5-flash-lite,openai:gpt-6-luna,gemini-3.5-flash`. Las entradas sin prefijo
+  (o con `gemini:`) siguen siendo Gemini. Un prefijo desconocido (por ejemplo `anthropic:`)
+  hace fallar el arranque. Si hay alguna entrada `openai:`, `OPENAI_API_KEY` es obligatoria:
+  sin ella el backend no arranca y el error nombra la variable (nunca su valor).
+- `gpt-6-luna` es un modelo de razonamiento: en Chat Completions solo acepta herramientas con
+  `reasoning_effort: "none"`. El Hub ya lo manda así en cada pedido; no hay nada que configurar.
+- La cadena pasa al siguiente modelo ante `404`, `408`, `429`, `500`, `502`, `503`, `504`,
+  timeout (`AI_TIMEOUT_MS`), error de red o una respuesta inválida del modelo. Ante `400`, `401`
+  o `403` corta en el acto: es un problema del pedido o de la API key y otro modelo fallaría
+  igual. Funciona igual mezclando Gemini y OpenAI. En las respuestas que usan herramientas, el
+  Hub vuelve a probar primero con el modelo que pidió la herramienta.
+- **Nunca pegues API keys** (Gemini, OpenAI, Meta) en chats, issues ni capturas de pantalla. Si
+  se filtró una, revocala y generá otra.
 
 ---
 
@@ -163,5 +190,11 @@ así que los errores solo se ven en los logs del backend.
 | `ai_reply_failed reason=SEND_FAILED` con `error.code: "WINDOW_CLOSED"` | Meta rechazó el envío porque la ventana de 24 h está cerrada de su lado. | Escribí de nuevo desde tu celular y reintentá. |
 | `ai_reply_failed reason=SEND_FAILED` con `error.code: "META_API_ERROR"` | Meta rechazó el envío. La causa más común es el token vencido o inválido (Meta responde `401`), por ejemplo si usaste el token temporal de la consola. El Hub no loguea el código de Meta. | Generá un token de System User (paso 2.3) y volvé a correr `configure:meta`. Revisá también que el System User tenga asignada la WABA. |
 | `ai_reply_failed reason=SEND_FAILED` con `error.code: "MULTIPLE_ACTIVE_ACCOUNTS"` | El tenant tiene más de una cuenta activa, típicamente por correr `seed:dev` después de `configure:meta`. | Marcá con `deleted_at` la fila sobrante de `whatsapp_accounts` y volvé a correr `configure:meta`. |
-| `ai_reply_failed reason=LLM_FAILED` o `ai_reply_failed LLM threw unexpectedly` | Falla de Gemini, por ejemplo falta `GEMINI_API_KEY` o es inválida. | Revisá `GEMINI_API_KEY` y reiniciá `dev`. |
+| El backend no arranca y el error dice `OPENAI_API_KEY is required` | `AI_MODEL` tiene una entrada `openai:` pero `OPENAI_API_KEY` no está o está vacía. | Definí `OPENAI_API_KEY` en el `.env` o sacá las entradas `openai:` de `AI_MODEL`. |
+| El backend no arranca y el error dice `unknown provider prefix` | Una entrada de `AI_MODEL` usa un prefijo que no es `gemini:` ni `openai:`. | Corregí la entrada; sin prefijo se toma como Gemini. |
+| `llm_model_fallback` (warn) con `fromModel`, `toModel`, `status`, `reason` | Un modelo de la cadena falló por algo transitorio (`503` por alta demanda, `404` por modelo retirado, `429`, `reason: "timeout"`) y el Hub siguió con el próximo. Los modelos aparecen como `proveedor:modelo` (por ejemplo `gemini:gemini-3.5-flash-lite`, `openai:gpt-6-luna`). La respuesta igual sale. | Nada urgente. Si se repite con `status: 404`, sacá ese modelo de `AI_MODEL`. Si se repite con `timeout` o `503`, poné primero un modelo más liviano (por ejemplo `gemini-3.5-flash-lite`). |
+| `ai_reply_failed reason=LLM_FAILED` con `error.cause.attempts` | Ningún modelo respondió. `attempts` lista cada intento con su `model` (`proveedor:modelo`), `reason` y `status` HTTP real. | `401`/`403` en un modelo `gemini:`: falta `GEMINI_API_KEY` o es inválida. `400`: el proveedor rechazó el pedido (no se reintenta con otro modelo). Todos `404`: modelos retirados, actualizá `AI_MODEL`. Todos `503`/`timeout`: los proveedores están saturados; esperá, sumá otro modelo a la cadena o subí `AI_TIMEOUT_MS`. Reiniciá `dev` después de tocar el `.env`. |
+| `LLM_FAILED` con `model: "openai:…"` y `status: 401` (`lastError.errorCode`, por ejemplo `invalid_api_key`) | `OPENAI_API_KEY` es incorrecta, de otro proyecto o fue revocada. La cadena corta ahí. | Generá una key nueva en el dashboard de OpenAI, ponela en el `.env` y reiniciá `dev`. |
+| `llm_model_fallback` o `LLM_FAILED` con `model: "openai:…"` y `status: 429` | Cuota agotada o límite de gasto (`lastError.errorType` / `errorCode`, por ejemplo `insufficient_quota`), o demasiados pedidos por segundo. El Hub pasa al siguiente modelo. | Si es cuota o gasto, cargá crédito o subí el límite en Billing de OpenAI (reintentar no lo arregla). Si es rate limit, esperá. Mientras tanto la cadena sigue con Gemini. |
+| `ai_reply_failed LLM threw unexpectedly` | Falla inesperada al llamar al LLM. | Revisá `GEMINI_API_KEY` / `OPENAI_API_KEY` y reiniciá `dev`. |
 | No llega nada a los logs | El túnel cambió de URL, el backend no está corriendo o no estás suscripto a `messages`. | Revisá los pasos 5 y 6. |

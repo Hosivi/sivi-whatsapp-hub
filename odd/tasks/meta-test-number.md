@@ -50,6 +50,46 @@ selection by credential presence, token encryption, SiviHub link (PRs #14/#15).
   by error code (BAD_SIGNATURE, UNKNOWN_PHONE_NUMBER_ID, INVALID_PHONE, AI_DISABLED, WINDOW_CLOSED).
   - Acceptance: structural readback; every env var and script named exists in code.
 
+- [x] **T3 — Preserve Gemini thought signatures across tool-use turns** (route: delegated
+  writer — adapter + types + tests; added 2026-10-10 after the live test).
+  Evidence: real repro (real DB + real Gemini, non-sending Meta stub) on `gemini-3.5-flash`
+  and `gemini-3.5-flash-lite`: the model calls `getBusinessInfo`, the tool runs OK, and the
+  next `generateContent` fails with 400 "Function call is missing a thought_signature in
+  functionCall parts". Every model available to new keys is Gemini 3.x (`gemini-2.5-flash`
+  and `gemini-2.5-flash-lite` return 404 "no longer available to new users"), so no config
+  workaround exists. Fix: carry the opaque `thoughtSignature` from response `functionCall`
+  parts on the tool-use turn and re-emit it on the matching `functionCall` parts when the
+  history is sent back. Anthropic adapter unaffected.
+  - Acceptance: focused adapter test RED→GREEN; full backend suite, typecheck and lint green;
+    real repro with `gemini-3.5-flash` reaches the send step (`SEND_FAILED` from the stub).
+
+- [x] **T4 — Ordered Gemini model fallback chain + per-attempt timeout** (route: delegated
+  writer — env + main wiring + adapter + tests + runbook; requested by the owner 2026-10-10
+  "permitime agregar varios [modelos]").
+  Why: live test showed single-model fragility — `gemini-3.8-flash`/`gemini-3.7-flash` 503
+  after 45–64 s, `gemini-2.5-*` 404 (retired for new keys), `gemini-3.5-flash-lite` OK in ~2 s.
+  Scope: `AI_MODEL` accepts an ordered comma-separated list (single value still valid);
+  default moves off the retired `gemini-2.5-flash`; the adapter falls back to the next model
+  on retryable failures (404/429/500/503, timeout, network) and NOT on 400/401/403; optional
+  `AI_TIMEOUT_MS` per attempt; fallback events logged with model + HTTP status (never the key);
+  tool-use follow-ups prefer the model that produced the thought signature.
+  - Acceptance: focused tests RED→GREEN; full backend suite, typecheck, lint green; live check
+    with a list whose first entry fails (e.g. retired model) still answers via the next one.
+
+- [x] **T5 — OpenAI provider in the model chain (`openai:gpt-6-luna`)** (route: delegated
+  writer — new OpenAI adapter + cross-provider chain + env + wiring + tests + runbook;
+  requested by the owner 2026-10-10 "quiero agregar el modelo chatgpt luna").
+  Verified (developers.openai.com/api/docs/models/gpt-6-luna.md): model id `gpt-6-luna`;
+  Chat Completions + Responses supported; function calling on Chat Completions only with
+  `reasoning_effort: "none"`; reasoning model; $0.10 / $0.50 per 1M tokens in/out.
+  Decision: Chat Completions via `fetch` (no new dependency), `reasoning_effort: "none"`;
+  `AI_MODEL` entries may carry a provider prefix (`openai:`), unprefixed = Gemini (back-compat);
+  `OPENAI_API_KEY` required only when an `openai:` entry is configured (fail fast at startup);
+  same fallback classification, timeout and `llm_model_fallback` logging across providers.
+  Security note: the owner pasted an OpenAI key in chat — treated as compromised; never used.
+  - Acceptance: focused tests RED→GREEN; full backend suite, typecheck, lint green; live check
+    pending the owner's NEW key.
+
 ## Delivery
 
 Strategy: `ask-on-risk` (default). Forecast was ≈ 250 authored lines; actual ≈ 1,010
@@ -75,6 +115,30 @@ Chain strategy is not needed unless the owner wants the PR split.
   (same as `seed-dev.ts`; admin bypasses RLS for bootstrap); re-running `seed:dev` after
   `configure:meta` leaves two active accounts (documented in the runbook); `mapMetaError`
   hides Meta 401/190 as `META_API_ERROR`.
+- T3 RED: focused `llm-adapter.unit.test.ts` 2 failed / 13 passed (signature missing on block
+  and on re-sent part). GREEN: 15/15; full backend suite 41 files / 416 tests; turbo typecheck
+  2/2; lint exit 0 (7 pre-existing warnings). Field: `Part.thoughtSignature` (@google/genai
+  2.10.0 `genai.d.ts`). Live parent check (real DB + real Gemini, non-sending Meta stub) with
+  `gemini-3.5-flash-lite`: `getBusinessInfo` runs, follow-up call accepted, flow reaches
+  `SEND_FAILED` from the stub as expected. `gemini-3.5-flash` returned transient 503s.
+- T4 RED: focused 33 failed / 13 passed. GREEN: focused 46/46 (+ `src/config/env.test.ts`
+  17/17); full backend 42 files / 447 tests; turbo typecheck 2/2; lint 0 errors (7 baseline
+  warnings). Timeout via `GenerateContentConfig.abortSignal` plus a bounding race; Gemini
+  "Thought signatures → Stateless mode" docs: resend prior thought blocks when switching
+  models, backend manages compatibility. Live parent check (real Gemini, non-sending Meta
+  stub) with `AI_MODEL=gemini-2.5-flash,gemini-3.5-flash-lite,gemini-3.5-flash`:
+  `llm_model_fallback` warn (from 2.5-flash, status 404) → 3.5-flash-lite answered → flow
+  reached `SEND_FAILED` from the stub as expected.
+- T5 RED: new files `ERR_MODULE_NOT_FOUND`, 12 new env tests failing. GREEN: 78/78 on the 3
+  files; focused `test/ai test/config` 11 files / 160 tests (parent re-run 160/160); full
+  backend 44 files / 512 tests; turbo typecheck 2/2 (+ ad hoc tsconfig over test files: 0
+  diagnostics); lint 0 errors (7 baseline warnings). Design: cross-provider
+  `createModelChainLlm` wraps single-model Gemini adapters (Gemini/T3/T4 code untouched) and a
+  fetch-based `createOpenAiAdapter` (Chat Completions, `reasoning_effort: "none"`, system prompt
+  as `developer`, synthesized tool-call ids, OpenAI `error.message` dropped). Owner's dev server
+  hot-reloaded T5 and stayed healthy with a Gemini-only `AI_MODEL`. Pending: live OpenAI check
+  with a NEW key; open risk — Gemini 3 receiving an unsigned OpenAI-produced function call after
+  an OpenAI follow-up failure is unverified (chain stops on 400).
 - Native review: slice `a819491..0de065b` → risk `medium` (`configuration_change` on
   package.json), `review_due` = `slice_budget_reached`; owner consent **granted**; lens
   `review-reliability` → **approved**; acknowledged, lineage `review-164cd12c98fef37d`
