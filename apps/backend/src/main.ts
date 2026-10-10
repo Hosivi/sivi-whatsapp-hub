@@ -50,10 +50,15 @@ const meta =
 
 // LLM adapter selection:
 //   dev (ENABLE_DEV_ENDPOINTS) → fake adapter (no Gemini calls, safe for local dev)
-//   default                    → real Gemini adapter (requires GEMINI_API_KEY)
+//   default                    → real Gemini adapter (requires GEMINI_API_KEY) over the
+//                                ordered AI_MODEL chain, bounded by AI_TIMEOUT_MS per
+//                                attempt; fallbacks are logged as warn llm_model_fallback.
 const llm = env.ENABLE_DEV_ENDPOINTS
   ? createFakeLlmAdapter()
-  : createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL);
+  : createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODELS, undefined, {
+      timeoutMs: env.AI_TIMEOUT_MS,
+      logger,
+    });
 
 const app = buildApp({ db, env, meta, llm, logger });
 

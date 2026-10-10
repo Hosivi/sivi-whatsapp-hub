@@ -63,6 +63,19 @@ selection by credential presence, token encryption, SiviHub link (PRs #14/#15).
   - Acceptance: focused adapter test RED→GREEN; full backend suite, typecheck and lint green;
     real repro with `gemini-3.5-flash` reaches the send step (`SEND_FAILED` from the stub).
 
+- [x] **T4 — Ordered Gemini model fallback chain + per-attempt timeout** (route: delegated
+  writer — env + main wiring + adapter + tests + runbook; requested by the owner 2026-10-10
+  "permitime agregar varios [modelos]").
+  Why: live test showed single-model fragility — `gemini-3.8-flash`/`gemini-3.7-flash` 503
+  after 45–64 s, `gemini-2.5-*` 404 (retired for new keys), `gemini-3.5-flash-lite` OK in ~2 s.
+  Scope: `AI_MODEL` accepts an ordered comma-separated list (single value still valid);
+  default moves off the retired `gemini-2.5-flash`; the adapter falls back to the next model
+  on retryable failures (404/429/500/503, timeout, network) and NOT on 400/401/403; optional
+  `AI_TIMEOUT_MS` per attempt; fallback events logged with model + HTTP status (never the key);
+  tool-use follow-ups prefer the model that produced the thought signature.
+  - Acceptance: focused tests RED→GREEN; full backend suite, typecheck, lint green; live check
+    with a list whose first entry fails (e.g. retired model) still answers via the next one.
+
 ## Delivery
 
 Strategy: `ask-on-risk` (default). Forecast was ≈ 250 authored lines; actual ≈ 1,010
@@ -94,6 +107,14 @@ Chain strategy is not needed unless the owner wants the PR split.
   2.10.0 `genai.d.ts`). Live parent check (real DB + real Gemini, non-sending Meta stub) with
   `gemini-3.5-flash-lite`: `getBusinessInfo` runs, follow-up call accepted, flow reaches
   `SEND_FAILED` from the stub as expected. `gemini-3.5-flash` returned transient 503s.
+- T4 RED: focused 33 failed / 13 passed. GREEN: focused 46/46 (+ `src/config/env.test.ts`
+  17/17); full backend 42 files / 447 tests; turbo typecheck 2/2; lint 0 errors (7 baseline
+  warnings). Timeout via `GenerateContentConfig.abortSignal` plus a bounding race; Gemini
+  "Thought signatures → Stateless mode" docs: resend prior thought blocks when switching
+  models, backend manages compatibility. Live parent check (real Gemini, non-sending Meta
+  stub) with `AI_MODEL=gemini-2.5-flash,gemini-3.5-flash-lite,gemini-3.5-flash`:
+  `llm_model_fallback` warn (from 2.5-flash, status 404) → 3.5-flash-lite answered → flow
+  reached `SEND_FAILED` from the stub as expected.
 - Native review: slice `a819491..0de065b` → risk `medium` (`configuration_change` on
   package.json), `review_due` = `slice_budget_reached`; owner consent **granted**; lens
   `review-reliability` → **approved**; acknowledged, lineage `review-164cd12c98fef37d`

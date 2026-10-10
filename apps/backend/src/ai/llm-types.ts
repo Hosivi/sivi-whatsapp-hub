@@ -54,6 +54,13 @@ export type ToolUseBlock = {
    * Absent for blocks that had none; ignored by every other adapter. Never log it.
    */
   readonly thoughtSignature?: string;
+  /**
+   * Gemini-only, provider-opaque ID of the model that emitted this block. When the
+   * tool-use turn is replayed, the adapter tries this model first (model affinity
+   * with its own thought signatures). Never sent to the provider; ignored by every
+   * other adapter.
+   */
+  readonly producerModel?: string;
 };
 
 /** Adapter response. Either plain text to send, and/or tool_use blocks to execute. */

@@ -6,7 +6,9 @@
  * Exports:
  * - LlmAdapter: injectable contract (interface)
  * - createAnthropicAdapter(apiKey, model): Anthropic SDK implementation (retained, not default)
- * - createGeminiAdapter(apiKey, model, _testGenerateFn?): Gemini SDK implementation (ACTIVE default)
+ * - createGeminiAdapter(apiKey, model | models, _testGenerateFn?, options?): Gemini SDK
+ *   implementation (ACTIVE default) with an ordered model fallback chain and a
+ *   per-attempt timeout
  * - createFakeLlmAdapter(script?): test double with calls[] and queueResponse()
  *
  * Security invariants:
@@ -249,8 +251,12 @@ function mapGeminiTools(tools: readonly LlmTool[]): Tool[] {
   ];
 }
 
-/** Maps a Gemini GenerateContentResponse to our neutral LlmResponse. */
-function mapGeminiResponse(response: GenerateContentResponse): LlmResponse {
+/**
+ * Maps a Gemini GenerateContentResponse to our neutral LlmResponse.
+ * `model` is the model that answered; it is stamped on every ToolUseBlock as
+ * `producerModel` so a replayed tool-use turn can prefer the same model.
+ */
+function mapGeminiResponse(response: GenerateContentResponse, model: string): LlmResponse {
   const candidate = response.candidates?.[0];
   const parts = candidate?.content?.parts ?? [];
 
@@ -270,6 +276,7 @@ function mapGeminiResponse(response: GenerateContentResponse): LlmResponse {
         ...(typeof part.thoughtSignature === 'string'
           ? { thoughtSignature: part.thoughtSignature }
           : {}),
+        producerModel: model,
       });
     }
   }
@@ -296,21 +303,202 @@ export type GeminiGenerateFn = (
   params: GenerateContentParameters,
 ) => Promise<GenerateContentResponse>;
 
+// ---------------------------------------------------------------------------
+// Gemini model fallback chain
+// ---------------------------------------------------------------------------
+
+/** Per-attempt timeout used when the caller does not inject one. */
+export const DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS = 20_000;
+
 /**
- * Real Gemini implementation. apiKey is NEVER logged.
- * Catches all SDK throws and maps them to LlmError (never throws to caller).
+ * HTTP statuses that move on to the next model: model gone for this key (404),
+ * request timeout (408), throttled (429) or temporarily failing (500/502/503/504).
+ * Anything else — notably 400/401/403 (bad request, invalid or unauthorized key) —
+ * is deterministic: every model would fail the same way, so it returns at once.
+ */
+const FALLBACK_HTTP_STATUSES: ReadonlySet<number> = new Set([404, 408, 429, 500, 502, 503, 504]);
+
+/** Why one model attempt failed. */
+export type GeminiAttemptFailureReason = 'http_error' | 'timeout' | 'network_error';
+
+/** One failed attempt of the chain. Safe to log: no key, prompt or customer text. */
+export type GeminiAttemptSummary = {
+  readonly model: string;
+  readonly reason: GeminiAttemptFailureReason;
+  /** HTTP status of the SDK ApiError; null for timeouts and network errors. */
+  readonly status: number | null;
+};
+
+/** `cause` of the LLM_NETWORK_ERROR returned when the chain ends without an answer. */
+export type GeminiChainFailure = {
+  /** Raw error of the last attempt (SDK ApiError, network error or timeout marker). */
+  readonly lastError: unknown;
+  /** Every attempt in the order it ran, with its HTTP status or failure reason. */
+  readonly attempts: readonly GeminiAttemptSummary[];
+};
+
+/** Payload of the `llm_model_fallback` warning. */
+export type LlmModelFallbackEvent = {
+  readonly fromModel: string;
+  readonly toModel: string;
+  readonly status: number | null;
+  readonly reason: GeminiAttemptFailureReason;
+};
+
+/** Minimal logger dependency — a pino Logger satisfies it. */
+export type LlmAdapterLogger = {
+  warn(event: LlmModelFallbackEvent, msg: string): void;
+};
+
+export type GeminiAdapterOptions = {
+  /** Per-attempt timeout in ms; a timed-out attempt falls back. Default 20 000. */
+  readonly timeoutMs?: number;
+  /** Receives one warn (`llm_model_fallback`) per fallback. */
+  readonly logger?: LlmAdapterLogger;
+};
+
+type AttemptOutcome =
+  | { readonly ok: true; readonly response: GenerateContentResponse }
+  | {
+      readonly ok: false;
+      readonly retryable: boolean;
+      readonly summary: GeminiAttemptSummary;
+      readonly error: unknown;
+    };
+
+const TIMED_OUT = Symbol('gemini-attempt-timed-out');
+
+/** Numeric HTTP status of an SDK ApiError (duck-typed); undefined for anything else. */
+function httpStatusOf(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null || !('status' in error)) return undefined;
+  const { status } = error as { status: unknown };
+  return typeof status === 'number' && Number.isInteger(status) ? status : undefined;
+}
+
+/**
+ * Runs one generate call bounded by `timeoutMs`. On timeout the request is
+ * cancelled through `GenerateContentConfig.abortSignal` (the @google/genai
+ * per-request cancel hook) and the race resolves, so the attempt stays bounded
+ * even if the transport ignores the signal. Never throws.
+ */
+async function attemptGenerate(
+  generateFn: GeminiGenerateFn,
+  params: GenerateContentParameters,
+  timeoutMs: number,
+): Promise<AttemptOutcome> {
+  const { model } = params;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+    timer.unref();
+  });
+
+  try {
+    const response = await Promise.race([
+      generateFn({ ...params, config: { ...params.config, abortSignal: controller.signal } }),
+      timedOut,
+    ]);
+    if (response !== TIMED_OUT) return { ok: true, response };
+    controller.abort();
+    return {
+      ok: false,
+      retryable: true,
+      summary: { model, reason: 'timeout', status: null },
+      error: { code: 'GEMINI_ATTEMPT_TIMEOUT', model, timeoutMs },
+    };
+  } catch (error) {
+    const status = httpStatusOf(error);
+    if (status === undefined) {
+      // No HTTP status: the request never got an answer (DNS, reset, fetch failed).
+      return {
+        ok: false,
+        retryable: true,
+        summary: { model, reason: 'network_error', status: null },
+        error,
+      };
+    }
+    return {
+      ok: false,
+      retryable: FALLBACK_HTTP_STATUSES.has(status),
+      summary: { model, reason: 'http_error', status },
+      error,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Normalizes one model or an ordered list: splits on commas, trims, drops empty
+ * entries and duplicates (first occurrence wins).
+ */
+function normalizeModels(model: string | readonly string[]): string[] {
+  const entries = (typeof model === 'string' ? [model] : model).flatMap((m) => m.split(','));
+  return [...new Set(entries.map((m) => m.trim()).filter((m) => m.length > 0))];
+}
+
+/**
+ * Model affinity for tool use: when the latest assistant-tool-use turn was
+ * produced by a model of the chain, that model goes first, then the rest in
+ * configured order.
  *
- * @param apiKey         - Google AI API key. Bound to the SDK client, not logged.
- * @param model          - Gemini model ID (e.g. 'gemini-2.5-flash').
+ * Cross-model signatures: Gemini docs (Thinking guide → "Thought signatures" →
+ * "Stateless mode", https://ai.google.dev/gemini-api/docs/thinking#signatures)
+ * state that when switching models within a session you should still resend the
+ * previous model's thought blocks and that the backend manages compatibility.
+ * So falling back to another model replays the signatures unchanged (never
+ * stripped, never replaced by dummy values); affinity keeps reasoning continuity
+ * and avoids relying on that cross-model path while the producer is healthy.
+ */
+function orderForHistory(
+  models: readonly string[],
+  messages: readonly LlmMessage[],
+): readonly string[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg?.role !== 'assistant-tool-use') continue;
+    const producer = msg.toolUses.find((tu) => tu.producerModel !== undefined)?.producerModel;
+    if (producer === undefined || !models.includes(producer)) return models;
+    return [producer, ...models.filter((m) => m !== producer)];
+  }
+  return models;
+}
+
+/**
+ * Real Gemini implementation with an ordered model fallback chain.
+ * apiKey is NEVER logged. Catches all SDK throws and maps them to LlmError
+ * (never throws to caller from complete()).
+ *
+ * Each complete() tries the models in order (tool-use follow-ups start with the
+ * model that produced the tool call). Retryable failures — 404/408/429/5xx, the
+ * per-attempt timeout, network errors without status — move to the next model
+ * and emit `llm_model_fallback`; deterministic ones (400/401/403) return at once.
+ * When the chain ends without an answer: err LLM_NETWORK_ERROR whose cause is a
+ * GeminiChainFailure (last error + attempts with real HTTP statuses).
+ *
+ * @param apiKey          - Google AI API key. Bound to the SDK client, not logged.
+ * @param model           - One Gemini model ID or an ordered list (fallback chain).
  * @param _testGenerateFn - Optional test seam: inject a stubbed generate function
  *                          instead of creating a real GoogleGenAI client.
  *                          ONLY for unit tests — never set in production.
+ * @param options         - Per-attempt timeout and fallback logger.
+ * @throws at construction (wiring time) when no model is configured.
  */
 export const createGeminiAdapter = (
   apiKey: string,
-  model: string,
+  model: string | readonly string[],
   _testGenerateFn?: GeminiGenerateFn,
+  options: GeminiAdapterOptions = {},
 ): LlmAdapter => {
+  const models = normalizeModels(model);
+  if (models.length === 0) {
+    // Infrastructure misconfiguration: fail fast at startup, not per request.
+    throw new Error('[llm-adapter] createGeminiAdapter requires at least one model');
+  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_GEMINI_ATTEMPT_TIMEOUT_MS;
+  const { logger } = options;
+
   // apiKey binds to the SDK client here and is NEVER referenced after this point.
   let generateFn: GeminiGenerateFn;
   if (_testGenerateFn) {
@@ -323,16 +511,41 @@ export const createGeminiAdapter = (
   return {
     async complete(system, messages, tools) {
       try {
-        const response = await generateFn({
-          model,
-          contents: mapGeminiMessages(messages),
-          config: {
-            systemInstruction: system,
-            maxOutputTokens: 1024,
-            ...(tools.length > 0 ? { tools: mapGeminiTools(tools) } : {}),
-          },
-        });
-        return ok(mapGeminiResponse(response));
+        const contents = mapGeminiMessages(messages);
+        const config = {
+          systemInstruction: system,
+          maxOutputTokens: 1024,
+          ...(tools.length > 0 ? { tools: mapGeminiTools(tools) } : {}),
+        };
+        const chain = orderForHistory(models, messages);
+        const attempts: GeminiAttemptSummary[] = [];
+        let lastError: unknown;
+
+        for (const [index, current] of chain.entries()) {
+          const outcome = await attemptGenerate(
+            generateFn,
+            { model: current, contents, config },
+            timeoutMs,
+          );
+          if (outcome.ok) return ok(mapGeminiResponse(outcome.response, current));
+
+          attempts.push(outcome.summary);
+          lastError = outcome.error;
+          const next = chain[index + 1];
+          if (!outcome.retryable || next === undefined) break;
+          logger?.warn(
+            {
+              fromModel: current,
+              toModel: next,
+              status: outcome.summary.status,
+              reason: outcome.summary.reason,
+            },
+            'llm_model_fallback',
+          );
+        }
+
+        const failure: GeminiChainFailure = { lastError, attempts };
+        return err({ code: 'LLM_NETWORK_ERROR' as const, cause: failure });
       } catch (cause) {
         return err({ code: 'LLM_NETWORK_ERROR' as const, cause });
       }

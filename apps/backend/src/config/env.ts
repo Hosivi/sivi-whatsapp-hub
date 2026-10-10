@@ -8,6 +8,22 @@
 
 import { z } from 'zod';
 
+/**
+ * Default ordered Gemini model chain: the fast flash-lite first, flash as fallback.
+ * gemini-2.5-* is not used: it answers 404 "no longer available to new users".
+ */
+export const DEFAULT_AI_MODEL = 'gemini-3.5-flash-lite,gemini-3.5-flash';
+
+/** Default per-attempt LLM timeout (ms) before falling back to the next model. */
+export const DEFAULT_AI_TIMEOUT_MS = 20_000;
+
+/** Splits AI_MODEL into an ordered model list: comma-separated, trimmed, empties dropped. */
+export const parseAiModelList = (raw: string): string[] =>
+  raw
+    .split(',')
+    .map((model) => model.trim())
+    .filter((model) => model.length > 0);
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_ADMIN_URL: z.string().min(1),
@@ -44,14 +60,39 @@ const envSchema = z.object({
   // Optional when ENABLE_DEV_ENDPOINTS=true (fake LLM adapter is used instead).
   // MUST be set in production. Explicit string gate — never coerced to boolean.
   GEMINI_API_KEY: z.string().optional(),
-  // LLM model to use for AI replies. Defaults to gemini-2.5-flash (Gemini provider).
-  AI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
+  // Ordered, comma-separated Gemini model chain for AI replies (a single model is
+  // also valid). The adapter tries them in order and falls back on retryable
+  // failures. Parsed into LoadedEnv.AI_MODELS; must list at least one model.
+  AI_MODEL: z
+    .string()
+    .default(DEFAULT_AI_MODEL)
+    .refine((raw) => parseAiModelList(raw).length > 0, {
+      message: 'AI_MODEL must list at least one model (comma-separated)',
+    }),
+  // Optional per-attempt LLM timeout in ms. LoadedEnv applies DEFAULT_AI_TIMEOUT_MS.
+  // Kept optional in Env so existing Env literals stay valid.
+  AI_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** Env plus the derived LLM settings, resolved once at startup by loadEnv(). */
+export type LoadedEnv = Env & {
+  /** Ordered, non-empty model fallback chain parsed from AI_MODEL. */
+  readonly AI_MODELS: readonly string[];
+  /** Per-attempt LLM timeout in ms (AI_TIMEOUT_MS or DEFAULT_AI_TIMEOUT_MS). */
+  readonly AI_TIMEOUT_MS: number;
+};
 
 /**
  * Parses and validates process.env. Throws a ZodError if required variables are
  * missing or invalid. Call once at process startup before any other module.
  */
-export const loadEnv = (): Env => envSchema.parse(process.env);
+export const loadEnv = (): LoadedEnv => {
+  const env = envSchema.parse(process.env);
+  return {
+    ...env,
+    AI_MODELS: parseAiModelList(env.AI_MODEL),
+    AI_TIMEOUT_MS: env.AI_TIMEOUT_MS ?? DEFAULT_AI_TIMEOUT_MS,
+  };
+};
