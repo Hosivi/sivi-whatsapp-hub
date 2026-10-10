@@ -47,6 +47,13 @@ export type ToolUseBlock = {
   readonly name: string;
   /** RAW model output — Zod-validated by the registry before use. */
   readonly input: unknown;
+  /**
+   * Gemini-only, provider-opaque thought signature (base64) returned on the
+   * functionCall part. Gemini 3.x requires it to be echoed back unchanged on the
+   * same functionCall part when the tool-use turn is replayed in history.
+   * Absent for blocks that had none; ignored by every other adapter. Never log it.
+   */
+  readonly thoughtSignature?: string;
 };
 
 /** Adapter response. Either plain text to send, and/or tool_use blocks to execute. */

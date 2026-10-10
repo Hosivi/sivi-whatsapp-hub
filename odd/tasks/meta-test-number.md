@@ -50,6 +50,19 @@ selection by credential presence, token encryption, SiviHub link (PRs #14/#15).
   by error code (BAD_SIGNATURE, UNKNOWN_PHONE_NUMBER_ID, INVALID_PHONE, AI_DISABLED, WINDOW_CLOSED).
   - Acceptance: structural readback; every env var and script named exists in code.
 
+- [x] **T3 — Preserve Gemini thought signatures across tool-use turns** (route: delegated
+  writer — adapter + types + tests; added 2026-10-10 after the live test).
+  Evidence: real repro (real DB + real Gemini, non-sending Meta stub) on `gemini-3.5-flash`
+  and `gemini-3.5-flash-lite`: the model calls `getBusinessInfo`, the tool runs OK, and the
+  next `generateContent` fails with 400 "Function call is missing a thought_signature in
+  functionCall parts". Every model available to new keys is Gemini 3.x (`gemini-2.5-flash`
+  and `gemini-2.5-flash-lite` return 404 "no longer available to new users"), so no config
+  workaround exists. Fix: carry the opaque `thoughtSignature` from response `functionCall`
+  parts on the tool-use turn and re-emit it on the matching `functionCall` parts when the
+  history is sent back. Anthropic adapter unaffected.
+  - Acceptance: focused adapter test RED→GREEN; full backend suite, typecheck and lint green;
+    real repro with `gemini-3.5-flash` reaches the send step (`SEND_FAILED` from the stub).
+
 ## Delivery
 
 Strategy: `ask-on-risk` (default). Forecast was ≈ 250 authored lines; actual ≈ 1,010
@@ -75,6 +88,12 @@ Chain strategy is not needed unless the owner wants the PR split.
   (same as `seed-dev.ts`; admin bypasses RLS for bootstrap); re-running `seed:dev` after
   `configure:meta` leaves two active accounts (documented in the runbook); `mapMetaError`
   hides Meta 401/190 as `META_API_ERROR`.
+- T3 RED: focused `llm-adapter.unit.test.ts` 2 failed / 13 passed (signature missing on block
+  and on re-sent part). GREEN: 15/15; full backend suite 41 files / 416 tests; turbo typecheck
+  2/2; lint exit 0 (7 pre-existing warnings). Field: `Part.thoughtSignature` (@google/genai
+  2.10.0 `genai.d.ts`). Live parent check (real DB + real Gemini, non-sending Meta stub) with
+  `gemini-3.5-flash-lite`: `getBusinessInfo` runs, follow-up call accepted, flow reaches
+  `SEND_FAILED` from the stub as expected. `gemini-3.5-flash` returned transient 503s.
 - Native review: slice `a819491..0de065b` → risk `medium` (`configuration_change` on
   package.json), `review_due` = `slice_budget_reached`; owner consent **granted**; lens
   `review-reliability` → **approved**; acknowledged, lineage `review-164cd12c98fef37d`

@@ -194,7 +194,11 @@ function mapGeminiMessages(messages: readonly LlmMessage[]): Content[] {
       return { role: 'model', parts: [{ text: msg.content }] };
     }
     if (msg.role === 'assistant-tool-use') {
-      // Gemini: model turn with functionCall parts
+      // Gemini: model turn with functionCall parts. Each part re-emits the
+      // thoughtSignature its block carried (Part-level field, sibling of
+      // functionCall) — Gemini 3 rejects the request otherwise. Blocks without a
+      // signature produce parts without the field (parallel calls: only the
+      // first part has one).
       return {
         role: 'model',
         parts: msg.toolUses.map((tu) => ({
@@ -203,6 +207,7 @@ function mapGeminiMessages(messages: readonly LlmMessage[]): Content[] {
             name: tu.name,
             args: tu.input as Record<string, unknown>,
           },
+          ...(tu.thoughtSignature !== undefined ? { thoughtSignature: tu.thoughtSignature } : {}),
         })),
       } as Content;
     }
@@ -261,6 +266,10 @@ function mapGeminiResponse(response: GenerateContentResponse): LlmResponse {
         id: part.functionCall.id ?? '',
         name: part.functionCall.name ?? '',
         input: part.functionCall.args ?? {},
+        // Opaque Gemini 3 signature — carried so mapGeminiMessages can echo it back.
+        ...(typeof part.thoughtSignature === 'string'
+          ? { thoughtSignature: part.thoughtSignature }
+          : {}),
       });
     }
   }

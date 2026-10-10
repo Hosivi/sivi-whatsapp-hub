@@ -6,7 +6,8 @@
  * - createFakeLlmAdapter: default response, queueResponse, calls[], script array.
  * - createAnthropicAdapter: TypeScript compilation only (no real Anthropic call).
  * - createGeminiAdapter: text response mapping, functionCall mapping, error handling,
- *   apiKey not leaked into generate params, LlmAdapter type-check.
+ *   apiKey not leaked into generate params, LlmAdapter type-check, and Gemini 3
+ *   thoughtSignature preservation across tool-use turns.
  *
  * STRICT TDD MODE — Gemini adapter tests written RED before implementation.
  */
@@ -217,5 +218,142 @@ describe('createGeminiAdapter (stub-injected — no real API call)', () => {
     // Must use toolName ('getBusinessInfo'), NOT toolUseId ('fc-001')
     expect(funcResponse.name).toBe('getBusinessInfo');
     expect(funcResponse.id).toBe('fc-001');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createGeminiAdapter — thought signatures (Gemini 3.x)
+// Gemini 3 rejects a follow-up request (400 "Function call is missing a
+// thought_signature") unless the opaque Part.thoughtSignature returned on a
+// functionCall part is echoed back unchanged on that same part in the history.
+// In parallel calls only the first functionCall part carries a signature, so it
+// must be preserved per part, never copied onto siblings.
+// ---------------------------------------------------------------------------
+
+describe('createGeminiAdapter — thought signatures', () => {
+  /** Stub that records every request and replies with the queued candidates in order. */
+  function makeScriptedStub(responses: unknown[][]) {
+    const received: GenerateContentParameters[] = [];
+    const queue = [...responses];
+    const fn = async (params: GenerateContentParameters): Promise<GenerateContentResponse> => {
+      received.push(params);
+      const candidates = queue.shift() ?? [
+        { content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' },
+      ];
+      return { candidates } as unknown as GenerateContentResponse;
+    };
+    return { fn, received };
+  }
+
+  /** Returns the functionCall parts of the first 'model' content in the request ([] if none). */
+  function modelFunctionCallParts(params: GenerateContentParameters | undefined) {
+    const contents = (params?.contents ?? []) as Content[];
+    const modelTurn = contents.find(
+      (c) => c.role === 'model' && (c.parts ?? []).some((p) => p.functionCall !== undefined),
+    );
+    return (modelTurn?.parts ?? []).filter((p) => p.functionCall !== undefined);
+  }
+
+  it('(g) functionCall part with thoughtSignature → ToolUseBlock carries it', async () => {
+    const stub = makeGeminiStub([
+      {
+        content: {
+          parts: [
+            {
+              functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: { query: 'hours' } },
+              thoughtSignature: 'c2lnLW9uZQ==',
+            },
+          ],
+        },
+        finishReason: 'STOP',
+      },
+    ]);
+    const adapter = createGeminiAdapter('sk-test', 'gemini-3.5-flash', stub);
+    const result = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('never');
+    expect(result.value.toolUses).toEqual([
+      {
+        id: 'fc-001',
+        name: 'getBusinessInfo',
+        input: { query: 'hours' },
+        thoughtSignature: 'c2lnLW9uZQ==',
+      },
+    ]);
+  });
+
+  it('(h) round-trip: the signature is re-emitted on the same functionCall part, per part', async () => {
+    // Turn 1: parallel calls — only the FIRST functionCall part carries a signature.
+    const { fn, received } = makeScriptedStub([
+      [
+        {
+          content: {
+            parts: [
+              {
+                functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: {} },
+                thoughtSignature: 'c2lnLW9uZQ==',
+              },
+              { functionCall: { id: 'fc-002', name: 'getPrices', args: { sku: 'A1' } } },
+            ],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    ]);
+    const adapter = createGeminiAdapter('sk-test', 'gemini-3.5-flash', fn);
+
+    const first = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('never');
+
+    // Turn 2: history carries the tool-use turn exactly as the adapter returned it.
+    const history: LlmMessage[] = [
+      ...MSGS,
+      { role: 'assistant-tool-use', toolUses: first.value.toolUses },
+      { role: 'tool', toolUseId: 'fc-001', toolName: 'getBusinessInfo', content: '{"ok":true}' },
+      { role: 'tool', toolUseId: 'fc-002', toolName: 'getPrices', content: '{"price":10}' },
+    ];
+    await adapter.complete(SYS, history, TOOLS);
+
+    expect(received).toHaveLength(2);
+    // Part-level field, sibling of functionCall (matches @google/genai Part).
+    // toStrictEqual also fails if the second part carries `thoughtSignature: undefined`.
+    expect(modelFunctionCallParts(received[1])).toStrictEqual([
+      {
+        functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: {} },
+        thoughtSignature: 'c2lnLW9uZQ==',
+      },
+      { functionCall: { id: 'fc-002', name: 'getPrices', args: { sku: 'A1' } } },
+    ]);
+  });
+
+  it('(i) blocks without a signature → no thoughtSignature on ToolUseBlock nor on parts', async () => {
+    const { fn, received } = makeScriptedStub([
+      [
+        {
+          content: {
+            parts: [{ functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: {} } }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    ]);
+    const adapter = createGeminiAdapter('sk-test', 'gemini-2.5-flash', fn);
+
+    const first = await adapter.complete(SYS, MSGS, TOOLS);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('never');
+    expect(first.value.toolUses).toStrictEqual([
+      { id: 'fc-001', name: 'getBusinessInfo', input: {} },
+    ]);
+
+    await adapter.complete(
+      SYS,
+      [...MSGS, { role: 'assistant-tool-use', toolUses: first.value.toolUses }],
+      TOOLS,
+    );
+    expect(modelFunctionCallParts(received[1])).toStrictEqual([
+      { functionCall: { id: 'fc-001', name: 'getBusinessInfo', args: {} } },
+    ]);
   });
 });
