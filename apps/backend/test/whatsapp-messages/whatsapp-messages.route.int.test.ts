@@ -20,6 +20,7 @@ import { contactsTable } from '../../src/db/schema/contacts.schema.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
+import { applyAiReplyUsageMigration } from '../ai/ai-reply-usage-db.helper.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -64,6 +65,7 @@ async function seedMessage(
     fromPhone: string;
     textBody: string;
     receivedAt: Date;
+    direction?: 'inbound' | 'outbound';
   },
 ): Promise<void> {
   await db.adminQuery((tx) =>
@@ -71,7 +73,7 @@ async function seedMessage(
       rawSql`
         INSERT INTO whatsapp_messages
           (tenant_id, wamid, phone_number_id, contact_id, from_phone_e164,
-           message_type, text_body, raw_payload, received_at)
+           message_type, text_body, raw_payload, received_at, direction)
         VALUES
           (${opts.tenantId}::uuid,
            ${opts.wamid},
@@ -81,7 +83,30 @@ async function seedMessage(
            'text',
            ${opts.textBody},
            ${'{}'}::jsonb,
-           ${opts.receivedAt.toISOString()}::timestamptz)
+           ${opts.receivedAt.toISOString()}::timestamptz,
+           ${opts.direction ?? 'inbound'})
+      `,
+    ),
+  );
+}
+
+/** Inserts an ai_reply_usage row directly via admin (bypasses RLS). */
+async function seedUsage(
+  db: TestDb,
+  opts: { tenantId: string; outboundWamid: string; deleted?: boolean },
+): Promise<void> {
+  await db.adminQuery((tx) =>
+    tx.execute(
+      rawSql`
+        INSERT INTO ai_reply_usage
+          (tenant_id, outbound_wamid, status, provider, model, input_tokens, output_tokens,
+           reasoning_tokens, total_tokens, llm_calls, tool_calls, fallback_attempts,
+           latency_ms, deleted_at)
+        VALUES
+          (${opts.tenantId}::uuid, ${opts.outboundWamid}, 'sent', 'openai', 'gpt-6-luna',
+           250, 50, 5, 300, 2, ARRAY['getBusinessInfo']::text[],
+           ${JSON.stringify([{ call: 2, model: 'gemini:x', reason: 'http_error', status: 503 }])}::jsonb,
+           1234, ${opts.deleted ? new Date().toISOString() : null}::timestamptz)
       `,
     ),
   );
@@ -112,6 +137,7 @@ describe('GET /whatsapp-messages', () => {
 
   beforeAll(async () => {
     db = await createTestDb();
+    await applyAiReplyUsageMigration(db);
     app = buildApp({ db, env: makeEnv(), meta: createFakeMetaClient() });
   });
 
@@ -222,5 +248,97 @@ describe('GET /whatsapp-messages', () => {
     const body = (await res.json()) as { data: Array<{ wamid: string }> };
     const tenantBMessages = body.data.filter((m) => m.wamid === 'wamid-tenant-b');
     expect(tenantBMessages.length).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // (e)/(f) author + AI usage (ai-usage-visibility T2)
+  // -------------------------------------------------------------------------
+
+  type AuthoredMessage = {
+    wamid: string;
+    name: string | null;
+    phone: string;
+    direction: string;
+    author: string;
+    ai: Record<string, unknown> | null;
+  };
+
+  async function seedAliceConversation(): Promise<void> {
+    await db.seedTenant(TENANT_A, { phoneE164: '+51987654321', fullName: 'Alice' });
+    const contactId = await getContactId(db, TENANT_A, '+51987654321');
+    const base = {
+      tenantId: TENANT_A,
+      phoneNumberId: PHONE_NUMBER_ID_A,
+      contactId,
+      fromPhone: '+51987654321',
+    };
+    await seedMessage(db, {
+      ...base,
+      wamid: 'wamid-in',
+      textBody: 'Hola',
+      receivedAt: new Date('2024-01-01T10:00:00Z'),
+    });
+    for (const [index, wamid] of ['wamid-ai', 'wamid-op', 'wamid-ai-deleted'].entries()) {
+      await seedMessage(db, {
+        ...base,
+        wamid,
+        textBody: `outbound ${wamid}`,
+        receivedAt: new Date(Date.UTC(2024, 0, 1, 11 + index)),
+        direction: 'outbound',
+      });
+    }
+  }
+
+  async function listAsTenantA(): Promise<Map<string, AuthoredMessage>> {
+    const res = await app.request('/whatsapp-messages', { headers: { 'X-Tenant-Id': TENANT_A } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: AuthoredMessage[] };
+    return new Map(body.data.map((m) => [m.wamid, m]));
+  }
+
+  it('(e) author: inbound → customer; outbound with a live usage row → ai (+usage); else operator', async () => {
+    await seedAliceConversation();
+    await seedUsage(db, { tenantId: TENANT_A, outboundWamid: 'wamid-ai' });
+    await seedUsage(db, { tenantId: TENANT_A, outboundWamid: 'wamid-ai-deleted', deleted: true });
+
+    const messages = await listAsTenantA();
+
+    expect(messages.get('wamid-in')).toMatchObject({
+      author: 'customer',
+      ai: null,
+      name: 'Alice',
+      phone: '+51987654321',
+      direction: 'inbound',
+    });
+    expect(messages.get('wamid-ai')).toMatchObject({
+      author: 'ai',
+      name: 'Alice',
+      phone: '+51987654321',
+      direction: 'outbound',
+      ai: {
+        provider: 'openai',
+        model: 'gpt-6-luna',
+        inputTokens: 250,
+        outputTokens: 50,
+        reasoningTokens: 5,
+        totalTokens: 300,
+        latencyMs: 1234,
+        llmCalls: 2,
+        toolCalls: ['getBusinessInfo'],
+        fallbackCount: 1,
+      },
+    });
+    expect(messages.get('wamid-op')).toMatchObject({ author: 'operator', ai: null });
+    // Soft-deleted usage rows do not make a message AI-authored.
+    expect(messages.get('wamid-ai-deleted')).toMatchObject({ author: 'operator', ai: null });
+  });
+
+  it("(f) RLS: another tenant's usage row never marks this tenant's message as AI", async () => {
+    await seedAliceConversation();
+    await seedUsage(db, { tenantId: TENANT_B, outboundWamid: 'wamid-op' });
+
+    const messages = await listAsTenantA();
+
+    expect(messages.get('wamid-op')).toMatchObject({ author: 'operator', ai: null });
   });
 });
