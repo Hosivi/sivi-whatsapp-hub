@@ -155,15 +155,21 @@ Out:
 - 2026-10-14: explored and planned (parent session, from SiviHubSoftware T11).
 - 2026-10-14: T1 committed as `3a766c9`. Native assess: medium risk, `review_due: false`
   (`under_budget`), so no native review was opened.
-- 2026-10-14: T2 implemented and verified (this commit).
+- 2026-10-14: T2 committed as `ef5ca25`. Native assess of the range `90334ab..ef5ca25`: medium
+  risk, `review_due: false` (`under_budget`), so no native review was opened.
+- 2026-10-14: delivery. The owner pushed `feat/fixed-replies` and chose two stacked PRs, each with
+  `size:exception`:
+  - #20 (`feat/ai-reply-off` → `main`) holds T1 (`3a766c9`), +557/−74.
+  - #21 (`feat/fixed-replies` → `feat/ai-reply-off`) holds T2 (`ef5ca25`) and this note,
+    +1572/−57 before the note.
+  - The Hub has no CI. The pre-push hook (`pnpm turbo test`) passed on both pushes.
 
 ## Next step
 
-The owner decides on push and PR, and reviews assumptions A1–A4 in the PR. These Hub draft PRs
-overlap with this work in `whatsapp.route.ts`, `whatsapp.service.ts` and `migrate.ts`:
-
-- #14 already adds `wasInserted`, the same idea as `isNew`.
-- #15 makes `SendInput.author` required; fixed replies will need an author value.
-- #19 adds migration 0009.
-
-Whichever lands second has to reconcile.
+- The owner reviews and merges #20, then retargets #21 to `main` and merges it.
+- The owner confirms assumptions A1–A4 in the PRs.
+- These Hub draft PRs overlap with this work in `whatsapp.route.ts`, `whatsapp.service.ts` and
+  `migrate.ts`. Whichever lands second has to reconcile:
+  - #14 already adds `wasInserted`, the same idea as `isNew`.
+  - #15 makes `SendInput.author` required; fixed replies will need an author value.
+  - #19 adds migration 0009.
