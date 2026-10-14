@@ -21,27 +21,39 @@
 import { Hono } from 'hono';
 import { type AiReplyInput, runAiReply } from '../ai/ai-reply.service.js';
 import type { AppDeps } from '../app.js';
+import { runFixedReply } from '../fixed-replies/fixed-reply.service.js';
 import { handleInboundMessage } from './whatsapp.service.js';
+
+type AutoReplyInput = AiReplyInput & {
+  /** wamid of the inbound message being answered. */
+  readonly wamid: string;
+};
 
 /**
  * The single place that decides how the Hub answers a NEW inbound text.
  * Fire-and-forget: it starts background work and returns at once — never awaited.
+ * Exactly one path runs per message, never both:
  *
  * - AI_REPLY_ENABLED on  → governed AI reply (runAiReply), still gated per tenant by
  *   tenant_ai_config.enabled.
- * - AI_REPLY_ENABLED off → no AI-generated reply, whatever the tenant config says. This is
- *   the default until SiviHub's agent takes over (stage E4); the fixed replies hook in here.
+ * - AI_REPLY_ENABLED off → fixed replies only (runFixedReply: greeting, hours, handoff),
+ *   never AI-generated text. This is the default until SiviHub's agent takes over (E4).
+ *
+ * Both return Result and never throw; .catch logs any unexpected infrastructure failure.
  */
-function dispatchAutoReply(deps: AppDeps, input: AiReplyInput): void {
+function dispatchAutoReply(deps: AppDeps, input: AutoReplyInput): void {
+  const { tenantId, contactId, fromPhoneE164, text, wamid } = input;
+
   if (deps.env.AI_REPLY_ENABLED) {
-    // runAiReply returns Result (never throws); .catch logs any unexpected infrastructure failure.
-    void runAiReply(deps, input).catch((cause) =>
+    void runAiReply(deps, { tenantId, contactId, fromPhoneE164, text }).catch((cause) =>
       deps.logger.error({ cause }, '[ai-reply] unhandled rejection'),
     );
     return;
   }
 
-  deps.logger.info({ tenantId: input.tenantId }, 'ai_reply_skipped reason=AI_REPLY_DISABLED');
+  void runFixedReply(deps, tenantId, { contactId, fromPhoneE164, text, wamid }).catch((cause) =>
+    deps.logger.error({ cause }, '[fixed-reply] unhandled rejection'),
+  );
 }
 
 /**
@@ -99,9 +111,9 @@ export function createWhatsappWebhookRoute(deps?: AppDeps): Hono {
 
     // Ack-fast: the auto-reply runs in the background — NEVER awaited before returning 200.
     // A re-delivered wamid (isNew = false) never triggers a second reply.
-    const { tenantId, contactId, fromPhoneE164, text, isNew } = result.value;
+    const { wamid, tenantId, contactId, fromPhoneE164, text, isNew } = result.value;
     if (isNew && text !== null) {
-      dispatchAutoReply(deps, { tenantId, contactId, fromPhoneE164, text });
+      dispatchAutoReply(deps, { tenantId, contactId, fromPhoneE164, text, wamid });
     }
 
     return c.text('ok', 200);

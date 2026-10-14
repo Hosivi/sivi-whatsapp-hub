@@ -8,6 +8,7 @@
  *     phone_number_id with deleted_at = NULL
  * (b) run seed a second time → still exactly one row, no error thrown
  * (c) the seeded tenant_ai_config row leaves the AI switched off (enabled = false)
+ * (d) one tenant_reply_settings row with the dev business name and hours text
  *
  * STRICT TDD MODE — tests written RED before implementation.
  */
@@ -17,6 +18,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tenantAiConfigTable } from '../../src/db/schema/tenant-ai-config.schema.js';
 import { whatsappAccountsTable } from '../../src/db/schema/whatsapp-accounts.schema.js';
 import {
+  DEV_AI_BUSINESS_INFO,
+  DEV_AI_BUSINESS_NAME,
   DEV_AI_VERTICAL,
   DEV_PHONE_NUMBER_ID,
   DEV_TENANT_ID,
@@ -80,6 +83,25 @@ describe('seed-dev (idempotent)', () => {
     expect(configs.length).toBe(1);
     expect(configs[0]?.vertical).toBe(DEV_AI_VERTICAL);
     expect(configs[0]?.enabled).toBe(false);
+  });
+
+  it('(d) seeds exactly one dev tenant_reply_settings row with the business name and hours', async () => {
+    // Already seeded twice in (a) and (b): the row must not be duplicated.
+    const rows = await db.adminSql<
+      { business_name: string | null; hours_text: string | null; enabled: boolean }[]
+    >`
+      SELECT business_name, hours_text, enabled
+      FROM tenant_reply_settings
+      WHERE tenant_id = ${DEV_TENANT_ID}::uuid AND deleted_at IS NULL
+    `;
+
+    expect(rows).toEqual([
+      {
+        business_name: DEV_AI_BUSINESS_NAME,
+        hours_text: DEV_AI_BUSINESS_INFO.hours,
+        enabled: true,
+      },
+    ]);
   });
 
   it('exports DEV_TENANT_ID and DEV_PHONE_NUMBER_ID as non-empty strings', () => {

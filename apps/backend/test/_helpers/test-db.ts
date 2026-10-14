@@ -245,7 +245,7 @@ export async function createTestDb(): Promise<TestDb> {
     async truncate() {
       // Truncate all domain tables via admin (superuser) bypasses RLS.
       // Order: whatsapp_messages first (FK → contacts), then whatsapp_accounts, outbox, contacts.
-      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, tenant_ai_config, contacts RESTART IDENTITY CASCADE`;
+      await adminSql`TRUNCATE TABLE whatsapp_messages, whatsapp_accounts, contact_lead_outbox, tenant_ai_config, tenant_reply_settings, contacts RESTART IDENTITY CASCADE`;
     },
 
     async teardown() {

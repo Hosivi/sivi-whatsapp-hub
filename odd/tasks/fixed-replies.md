@@ -100,10 +100,41 @@ Out:
   - In a fresh worktree, run `pnpm --filter @sivihub/contracts build` before the backend suite.
   - Negative assertions wait a fixed 500 ms, because the repo has no helper that waits for
     fire-and-forget work.
-- [ ] **T2 — Fixed replies.**
+- [x] **T2 — Fixed replies.**
   - Covers the selector, the `tenant_reply_settings` table (in the same 0010 migration), the
     service, the webhook wiring, the new spec, and the dev seed row.
   - Route: delegated writer, the same thread as T1.
+  - What changed:
+    - `src/fixed-replies/`: the pure `fixed-reply.ts` (`normalize`, `selectFixedReply`,
+      `renderFixedReply`), `fixed-reply.service.ts` (`runFixedReply`, which returns `Result` and
+      never throws) and `reply-settings.repository.ts` (reads under RLS).
+    - Migration 0010 adds `tenant_reply_settings`: a partial unique index on the live row, RLS
+      enabled and forced, the `tenant_isolation` policy and the grants.
+    - Exactly one path runs per message: AI when the switch is on, fixed replies when it is off.
+    - Each message gets exactly one log line: `fixed_reply_sent`, `fixed_reply_skipped` or
+      `fixed_reply_failed`.
+    - The runbook `Docs/runbooks/meta-test-number.md` describes fixed replies as the default and
+      how to switch the AI on for a test (`AI_REPLY_ENABLED=true` plus `tenant_ai_config` by SQL).
+      Its voseo was neutralized: a scan finds 0 hits.
+  - Decisions the writer took (accepted by the parent):
+    - Fixed replies also respect the 24 h window (`WINDOW_CLOSED`), because Meta rejects free text
+      outside it and can re-deliver old messages.
+    - "First in 24 h" counts only inbound text messages.
+    - `hours_text` is the `{horario}` value, not an override. Only the greeting and the handoff
+      can be overridden.
+    - An override that needs a value the tenant has not set falls back to the default.
+  - RED:
+    - The three new test files failed with `ERR_MODULE_NOT_FOUND`.
+    - The seed test failed with `relation "tenant_reply_settings" does not exist`.
+    - The switch-off webhook test expected 1 send and got 0.
+  - GREEN: 5 files, 75/75.
+  - Checks:
+    - Full backend suite: 45 files, 462/462. The parent re-ran it after the writer's formatting
+      pass and got the same result.
+    - `pnpm lint` and `pnpm typecheck`: green.
+    - `git diff --check`: clean.
+  - Follow-up: the dev greeting reads «Tienda Dev (seed)», because the seed reuses
+    `DEV_AI_BUSINESS_NAME`. Local databases need `migrate` before `seed:dev`.
 
 ## Acceptance criteria
 
@@ -122,7 +153,23 @@ Out:
 ## Progress
 
 - 2026-10-14: explored and planned (parent session, from SiviHubSoftware T11).
+- 2026-10-14: T1 committed as `3a766c9`. Native assess: medium risk, `review_due: false`
+  (`under_budget`), so no native review was opened.
+- 2026-10-14: T2 committed as `ef5ca25`. Native assess of the range `90334ab..ef5ca25`: medium
+  risk, `review_due: false` (`under_budget`), so no native review was opened.
+- 2026-10-14: delivery. The owner pushed `feat/fixed-replies` and chose two stacked PRs, each with
+  `size:exception`:
+  - #20 (`feat/ai-reply-off` → `main`) holds T1 (`3a766c9`), +557/−74.
+  - #21 (`feat/fixed-replies` → `feat/ai-reply-off`) holds T2 (`ef5ca25`) and this note,
+    +1572/−57 before the note.
+  - The Hub has no CI. The pre-push hook (`pnpm turbo test`) passed on both pushes.
 
 ## Next step
 
-T1.
+- The owner reviews and merges #20, then retargets #21 to `main` and merges it.
+- The owner confirms assumptions A1–A4 in the PRs.
+- These Hub draft PRs overlap with this work in `whatsapp.route.ts`, `whatsapp.service.ts` and
+  `migrate.ts`. Whichever lands second has to reconcile:
+  - #14 already adds `wasInserted`, the same idea as `isNew`.
+  - #15 makes `SendInput.author` required; fixed replies will need an author value.
+  - #19 adds migration 0009.
