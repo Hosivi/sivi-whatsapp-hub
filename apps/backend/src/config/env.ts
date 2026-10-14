@@ -29,6 +29,14 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true'),
+  // AI auto-reply kill switch, process-wide. Off until SiviHub's agent takes over (stage E4):
+  // while off, the Hub never sends AI-generated replies, whatever tenant_ai_config.enabled
+  // says. Same explicit string-equality gate as ENABLE_DEV_ENDPOINTS: ONLY the literal
+  // "true" turns it on; unset, "false", "1", … all yield false.
+  AI_REPLY_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
   // Meta Graph API version for outbound sends (injected to createMetaClient). Default v21.0.
   WHATSAPP_META_API_VERSION: z.string().min(1).default('v21.0'),
   // Optional: select the WhatsApp egress provider. Defaults to Meta Cloud API.

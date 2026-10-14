@@ -168,4 +168,23 @@ describe('getTenantAiConfig', () => {
     if (!result.ok) return;
     expect(result.value?.businessName).toBe('Active');
   });
+
+  it('defaults enabled to false when a row is inserted without it (AI off unless switched on)', async () => {
+    await db.adminSql`
+      INSERT INTO tenant_ai_config (tenant_id, vertical, business_name, business_info)
+      VALUES (${TENANT_A}::uuid, 'tienda_general', 'No explicit flag', '{}'::jsonb)
+    `;
+
+    const rows = await db.adminSql<{ enabled: boolean }[]>`
+      SELECT enabled FROM tenant_ai_config WHERE business_name = 'No explicit flag'
+    `;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.enabled).toBe(false);
+
+    // The AI reply path therefore sees no enabled config for the tenant.
+    const result = await getTenantAiConfig(db.withTenant, TENANT_A);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toBeNull();
+  });
 });

@@ -8,7 +8,8 @@
  * - vertical: the business vertical (e.g. 'tienda_general'). Only one active
  *   row per (tenant_id, vertical) is allowed (partial unique index on deleted_at IS NULL).
  * - business_info: JSONB blob consumed by the getBusinessInfo AI tool.
- * - enabled: soft-toggle; false = AI reply is silently skipped.
+ * - enabled: soft-toggle; false = AI reply is silently skipped. Defaults to false
+ *   (0010_fixed_replies.sql). The AI_REPLY_ENABLED env switch gates it process-wide.
  * - system_prompt_override: when non-null, replaces the generated system prompt entirely.
  * - deleted_at: soft-delete sentinel; NULL = active.
  */
@@ -22,7 +23,7 @@ export const tenantAiConfigTable = pgTable('tenant_ai_config', {
   vertical: text('vertical').notNull(),
   businessName: text('business_name').notNull(),
   businessInfo: jsonb('business_info').notNull(),
-  enabled: boolean('enabled').default(true).notNull(),
+  enabled: boolean('enabled').default(false).notNull(),
   systemPromptOverride: text('system_prompt_override'),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' })
     .notNull()

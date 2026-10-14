@@ -3,7 +3,9 @@
  *
  * Loads the credentials of Meta's free *test number* (phone_number_id, display
  * number, WABA id, System User access token) into the dev tenant created by
- * seed-dev.ts, so the governed AI reply runs end-to-end against the real Graph API.
+ * seed-dev.ts, so inbound messages and replies run end-to-end against the real Graph API.
+ * It never switches the AI on: AI replies need AI_REPLY_ENABLED=true and an enabled
+ * tenant_ai_config row, both off by default until SiviHub's agent takes over (E4).
  * Step-by-step guide: Docs/runbooks/meta-test-number.md.
  *
  * Inputs come ONLY from environment variables — never from CLI args:
@@ -13,9 +15,9 @@
  * In ONE transaction (all checks run before any write):
  * - whatsapp_accounts: exactly one active row → update it; none → insert one;
  *   more than one → fail (the send path requires exactly one — resolveActiveAccount).
- * - tenant_ai_config: one live row → set enabled = true (other fields untouched);
- *   none → insert the seed defaults; more than one → fail (getTenantAiConfig
- *   requires exactly one).
+ * - tenant_ai_config: one live row → left untouched (never rewritten);
+ *   none → insert the seed defaults with enabled = false; more than one → fail
+ *   (getTenantAiConfig requires exactly one).
  *
  * Tenant scoping: like migrate.ts and seed-dev.ts this is a privileged bootstrap
  * script on DATABASE_ADMIN_URL. The admin role bypasses RLS, and no helper sets
@@ -64,7 +66,7 @@ export type ConfigureMetaSummary = {
   readonly displayPhoneNumber: string;
   readonly wabaId: string;
   readonly account: 'updated' | 'inserted';
-  readonly aiConfig: 'enabled' | 'already-enabled' | 'inserted';
+  readonly aiConfig: 'unchanged' | 'inserted';
 };
 
 /** Expected failures. No variant carries a credential value. */
@@ -137,7 +139,8 @@ const isPhoneNumberIdConflict = (cause: unknown): boolean =>
 
 /**
  * Upserts the dev tenant's single active WhatsApp account with the given Meta
- * credentials and makes sure its AI config is enabled — atomically.
+ * credentials and makes sure it has an AI config row (switched off when created)
+ * — atomically. An existing AI config is never rewritten.
  *
  * Expected failures are returned as Result errors (nothing is written). A
  * phone_number_id already owned by another live row rolls the transaction back
@@ -194,7 +197,7 @@ const provisionDevTenant = async (
 
   // 2) Writes.
   const account = await upsertActiveAccount(tx, activeAccounts[0]?.id ?? null, credentials);
-  const aiConfig = await ensureAiConfigEnabled(tx, aiConfigs[0] ?? null);
+  const aiConfig = await ensureAiConfigExists(tx, aiConfigs[0] ?? null);
 
   return ok({
     tenantId: DEV_TENANT_ID,
@@ -238,35 +241,31 @@ const upsertActiveAccount = async (
   return 'inserted';
 };
 
-const ensureAiConfigEnabled = async (
+/**
+ * Never switches the AI on: until SiviHub's agent takes over (E4) the Hub only sends
+ * fixed replies. An existing row is left exactly as it is; a missing one gets the
+ * seed-dev.ts defaults with enabled = false.
+ */
+const ensureAiConfigExists = async (
   tx: postgres.TransactionSql,
-  existing: { id: string; enabled: boolean } | null,
+  existing: { id: string } | null,
 ): Promise<ConfigureMetaSummary['aiConfig']> => {
-  if (existing === null) {
-    // Same values seed-dev.ts uses for the dev tenant.
-    await tx`
-      INSERT INTO tenant_ai_config
-        (tenant_id, vertical, business_name, business_info, enabled)
-      VALUES
-        (${DEV_TENANT_ID}::uuid,
-         ${DEV_AI_VERTICAL},
-         ${DEV_AI_BUSINESS_NAME},
-         ${JSON.stringify(DEV_AI_BUSINESS_INFO)}::jsonb,
-         true)
-    `;
-    return 'inserted';
+  if (existing !== null) {
+    return 'unchanged';
   }
 
-  if (existing.enabled) {
-    return 'already-enabled';
-  }
-
+  // Same values seed-dev.ts uses for the dev tenant.
   await tx`
-    UPDATE tenant_ai_config
-    SET enabled = true, updated_at = now()
-    WHERE id = ${existing.id}::uuid AND tenant_id = ${DEV_TENANT_ID}::uuid
+    INSERT INTO tenant_ai_config
+      (tenant_id, vertical, business_name, business_info, enabled)
+    VALUES
+      (${DEV_TENANT_ID}::uuid,
+       ${DEV_AI_VERTICAL},
+       ${DEV_AI_BUSINESS_NAME},
+       ${JSON.stringify(DEV_AI_BUSINESS_INFO)}::jsonb,
+       false)
   `;
-  return 'enabled';
+  return 'inserted';
 };
 
 // ---------------------------------------------------------------------------
@@ -284,7 +283,7 @@ export const formatConfigureMetaSummary = (summary: ConfigureMetaSummary): strin
     `  display_phone_number: ${summary.displayPhoneNumber}`,
     `  waba_id:              ${summary.wabaId}`,
     `  whatsapp_accounts:    ${summary.account}`,
-    `  tenant_ai_config:     ${summary.aiConfig} (enabled = true)`,
+    `  tenant_ai_config:     ${summary.aiConfig} (AI never switched on here; see AI_REPLY_ENABLED)`,
     '  access_token:         stored (never printed)',
   ].join('\n');
 

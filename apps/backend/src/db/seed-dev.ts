@@ -88,8 +88,10 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
       AND access_token IS NULL
   `;
 
-  // Insert dev tenant_ai_config row for the tienda_general vertical.
-  // ON CONFLICT DO NOTHING (partial unique index on tenant_id, vertical WHERE deleted_at IS NULL).
+  // Insert dev tenant_ai_config row for the tienda_general vertical, with the AI switched
+  // OFF: until SiviHub's agent takes over (E4) the Hub never sends AI-generated replies.
+  // ON CONFLICT DO NOTHING (partial unique index on tenant_id, vertical WHERE deleted_at IS NULL)
+  // — an existing row is never rewritten.
   await sql`
     INSERT INTO tenant_ai_config
       (tenant_id, vertical, business_name, business_info, enabled, deleted_at)
@@ -98,7 +100,7 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
        ${DEV_AI_VERTICAL},
        ${DEV_AI_BUSINESS_NAME},
        ${JSON.stringify(DEV_AI_BUSINESS_INFO)}::jsonb,
-       true,
+       false,
        NULL)
     ON CONFLICT DO NOTHING
   `;

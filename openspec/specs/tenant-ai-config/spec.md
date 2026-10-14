@@ -26,7 +26,7 @@ The migration MUST create a `tenant_ai_config` table with these columns:
 | `vertical` | TEXT | NOT NULL |
 | `business_name` | TEXT | NOT NULL |
 | `business_info` | JSONB | NOT NULL |
-| `enabled` | BOOLEAN | NOT NULL default `true` |
+| `enabled` | BOOLEAN | NOT NULL default `false` |
 | `system_prompt_override` | TEXT | NULLABLE |
 | `created_at` | TIMESTAMPTZ | NOT NULL default `now()` |
 | `updated_at` | TIMESTAMPTZ | NOT NULL default `now()` |
@@ -34,12 +34,18 @@ The migration MUST create a `tenant_ai_config` table with these columns:
 
 No column other than `system_prompt_override` and `deleted_at` may be NULL.
 
+`enabled` was created with default `true` (0004) and migration
+`0010_fixed_replies.sql` changes the default to `false`: a new config never turns
+the AI on by accident. Existing rows are NOT rewritten by that migration; the
+process-wide `AI_REPLY_ENABLED` switch (see the `ai-reply` spec) keeps AI replies
+off whatever a row says.
+
 #### Scenario: table exists after migration with correct shape
 
-- GIVEN the migration has been applied
+- GIVEN all migrations have been applied
 - WHEN the `tenant_ai_config` table is inspected
 - THEN all columns from the schema table above exist with their declared types
-- AND `enabled` defaults to `true` when not supplied
+- AND `enabled` defaults to `false` when not supplied
 
 ---
 
@@ -71,18 +77,28 @@ enforcement.
 
 The dev seed MUST insert exactly one row for the dev tenant with:
 - `vertical = 'tienda_general'`
-- `enabled = true`
+- `enabled = false` (the AI stays off until SiviHub's agent takes over in E4)
 - `business_name` and `business_info` with sample product/hours data sufficient
   for the `getBusinessInfo` tool to return a non-empty response
 
-The seed MUST be idempotent (re-running does not insert duplicates).
+The seed MUST be idempotent (re-running does not insert duplicates) and MUST NOT
+rewrite an existing row. The `configure:meta` command MUST NOT switch the AI on
+either: it leaves an existing row untouched and, when none exists, inserts the
+seed defaults with `enabled = false`.
 
 #### Scenario: dev seed produces one tienda_general row
 
 - GIVEN the dev seed has been run
 - WHEN `tenant_ai_config` is queried under the dev tenant context
-- THEN exactly one row exists with `vertical = 'tienda_general'` and `enabled = true`
+- THEN exactly one row exists with `vertical = 'tienda_general'` and `enabled = false`
 - AND `business_info` is a non-empty JSONB object
+
+#### Scenario: configure:meta never switches the AI on
+
+- GIVEN the dev tenant has a `tenant_ai_config` row with any `enabled` value
+- WHEN `configure:meta` runs
+- THEN the row is left exactly as it was
+- AND when the dev tenant had no row, the inserted row has `enabled = false`
 
 #### Scenario: seed is idempotent
 

@@ -11,12 +11,13 @@
 
 import * as crypto from 'node:crypto';
 import pino from 'pino';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeLlmAdapter } from '../../src/ai/llm-adapter.js';
 import { buildApp } from '../../src/app.js';
 import type { Env } from '../../src/config/env.js';
 import { whatsappMessagesTable } from '../../src/db/schema/whatsapp-messages.schema.js';
 import { createFakeMetaClient } from '../../src/meta/meta-client.js';
+import { handleInboundMessage } from '../../src/webhooks/whatsapp.service.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -50,9 +51,29 @@ function makeEnv(overrides?: Partial<Env>): Env {
     WHATSAPP_APP_SECRET: APP_SECRET,
     DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost:5432/unused',
     ENABLE_DEV_ENDPOINTS: false,
+    AI_REPLY_ENABLED: false,
     WHATSAPP_META_API_VERSION: 'v21.0',
     ...overrides,
   };
+}
+
+/** Unix seconds for "now", so an inbound message opens the 24h service window. */
+function nowTimestamp(): string {
+  return String(Math.floor(Date.now() / 1000));
+}
+
+/**
+ * Gives the fire-and-forget work the route starts (the background auto-reply) time to run,
+ * so a test can assert that something did NOT happen. The route never awaits that work.
+ */
+function settleBackgroundWork(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+/** Copies a string into an exact-size ArrayBuffer (Buffer.from may share a pooled one). */
+function toArrayBuffer(text: string): ArrayBuffer {
+  const bytes = new TextEncoder().encode(text);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 /**
@@ -461,6 +482,26 @@ describe('/webhooks/whatsapp', () => {
       const wamid2Rows = msgs.filter((m) => m.wamid === WAMID_2);
       expect(wamid2Rows.length).toBe(1);
     });
+
+    it('2.10c — handleInboundMessage reports isNew = true first, false for a re-delivered wamid', async () => {
+      const deps = {
+        db: testDb,
+        env: makeEnv(),
+        meta: createFakeMetaClient(),
+        llm: createFakeLlmAdapter(),
+        logger: pino({ level: 'silent' }),
+      };
+      const rawBody = JSON.stringify(makeMetaPayload({ wamid: 'is_new_wamid' }));
+      const signature = computeSignature(rawBody, APP_SECRET);
+
+      const first = await handleInboundMessage(deps, toArrayBuffer(rawBody), signature);
+      const second = await handleInboundMessage(deps, toArrayBuffer(rawBody), signature);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(first.ok && first.value.isNew).toBe(true);
+      expect(second.ok && second.value.isNew).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -675,5 +716,85 @@ describe('/webhooks/whatsapp', () => {
         expect(res.status).toBe(200);
       });
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // POST — automatic reply gating (AI_REPLY_ENABLED kill switch + duplicate wamid)
+  // -------------------------------------------------------------------------
+
+  describe('POST /webhooks/whatsapp — automatic reply gating', () => {
+    /** Builds an app with its own fakes so each test can count LLM calls and sends. */
+    function makeAppWithFakes(aiReplyEnabled: boolean) {
+      const meta = createFakeMetaClient();
+      const llm = createFakeLlmAdapter();
+      const appUnderTest = buildApp({
+        db: testDb,
+        env: makeEnv({ AI_REPLY_ENABLED: aiReplyEnabled }),
+        meta,
+        llm,
+        logger: pino({ level: 'silent' }),
+      });
+      return { app: appUnderTest, meta, llm };
+    }
+
+    beforeEach(async () => {
+      // Tenant A can send (access token set) and has the AI enabled at the data level,
+      // so the only thing that can stop an AI reply is the gate under test.
+      await testDb.adminSql`
+        UPDATE whatsapp_accounts SET access_token = 'test-access-token'
+        WHERE tenant_id = ${TENANT_A}::uuid
+      `;
+      await testDb.adminSql`
+        INSERT INTO tenant_ai_config (tenant_id, vertical, business_name, business_info, enabled)
+        VALUES (${TENANT_A}::uuid, 'tienda_general', 'Tienda Test', '{}'::jsonb, true)
+      `;
+    });
+
+    it('switch off + tenant_ai_config.enabled = true → 0 LLM calls and 0 sends', async () => {
+      const { app: appOff, meta, llm } = makeAppWithFakes(false);
+
+      const res = await postWebhook(
+        appOff,
+        makeMetaPayload({ wamid: 'switch_off_wamid', timestamp: nowTimestamp() }),
+      );
+      expect(res.status).toBe(200);
+      await settleBackgroundWork();
+
+      expect(llm.calls).toHaveLength(0);
+      expect(meta.calls).toHaveLength(0);
+    });
+
+    it('switch on → the AI reply still runs (one LLM call, one send to the sender)', async () => {
+      const { app: appOn, meta, llm } = makeAppWithFakes(true);
+
+      const res = await postWebhook(
+        appOn,
+        makeMetaPayload({ wamid: 'switch_on_wamid', timestamp: nowTimestamp() }),
+      );
+      expect(res.status).toBe(200);
+
+      await vi.waitFor(() => expect(meta.calls).toHaveLength(1), { timeout: 5_000 });
+      expect(llm.calls).toHaveLength(1);
+      expect(meta.calls[0]?.to).toBe('+51987654321');
+      expect(meta.calls[0]?.text).toBe('fake reply');
+    });
+
+    it('switch on + the same wamid delivered twice → at most one reply', async () => {
+      const { app: appOn, meta, llm } = makeAppWithFakes(true);
+      const payload = makeMetaPayload({ wamid: 'duplicate_wamid', timestamp: nowTimestamp() });
+
+      const first = await postWebhook(appOn, payload);
+      const retry = await postWebhook(appOn, payload);
+      expect(first.status).toBe(200);
+      expect(retry.status).toBe(200);
+
+      await vi.waitFor(() => expect(meta.calls.length).toBeGreaterThanOrEqual(1), {
+        timeout: 5_000,
+      });
+      await settleBackgroundWork();
+
+      expect(llm.calls).toHaveLength(1);
+      expect(meta.calls).toHaveLength(1);
+    });
   });
 });

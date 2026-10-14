@@ -7,14 +7,21 @@
  * (a) run seed once → exactly one row in whatsapp_accounts for the configured
  *     phone_number_id with deleted_at = NULL
  * (b) run seed a second time → still exactly one row, no error thrown
+ * (c) the seeded tenant_ai_config row leaves the AI switched off (enabled = false)
  *
  * STRICT TDD MODE — tests written RED before implementation.
  */
 
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { tenantAiConfigTable } from '../../src/db/schema/tenant-ai-config.schema.js';
 import { whatsappAccountsTable } from '../../src/db/schema/whatsapp-accounts.schema.js';
-import { DEV_PHONE_NUMBER_ID, DEV_TENANT_ID, runDevSeed } from '../../src/db/seed-dev.js';
+import {
+  DEV_AI_VERTICAL,
+  DEV_PHONE_NUMBER_ID,
+  DEV_TENANT_ID,
+  runDevSeed,
+} from '../../src/db/seed-dev.js';
 import type { TestDb } from '../_helpers/test-db.js';
 import { createTestDb } from '../_helpers/test-db.js';
 
@@ -62,6 +69,17 @@ describe('seed-dev (idempotent)', () => {
 
     expect(rows.length).toBe(1);
     expect(rows[0]?.accessToken).toBe('dev-access-token');
+  });
+
+  it('(c) seeds exactly one dev tenant_ai_config row with the AI switched off', async () => {
+    // Already seeded in (a) and (b).
+    const configs = await db.adminQuery((tx) =>
+      tx.select().from(tenantAiConfigTable).where(eq(tenantAiConfigTable.tenantId, DEV_TENANT_ID)),
+    );
+
+    expect(configs.length).toBe(1);
+    expect(configs[0]?.vertical).toBe(DEV_AI_VERTICAL);
+    expect(configs[0]?.enabled).toBe(false);
   });
 
   it('exports DEV_TENANT_ID and DEV_PHONE_NUMBER_ID as non-empty strings', () => {
