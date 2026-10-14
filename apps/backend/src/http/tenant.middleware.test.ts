@@ -23,6 +23,7 @@ const DEV_HEADER_ENV: Env = {
   WHATSAPP_APP_SECRET: 'test-app-secret',
   DATABASE_WEBHOOK_URL: 'postgresql://app_webhook:testpassword@localhost/hub',
   ENABLE_DEV_ENDPOINTS: false,
+  AI_REPLY_ENABLED: false,
   WHATSAPP_META_API_VERSION: 'v21.0',
   AI_MODEL: 'gemini-2.5-flash',
 };

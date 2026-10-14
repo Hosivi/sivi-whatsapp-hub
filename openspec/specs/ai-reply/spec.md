@@ -8,7 +8,8 @@
 ## Purpose
 
 Define the observable behavior of the governed AI reply loop that fires after the
-inbound WhatsApp webhook returns 200. This spec describes WHAT must be true —
+inbound WhatsApp webhook returns 200 — only for a new inbound text and only while
+the process-wide `AI_REPLY_ENABLED` switch is on. This spec describes WHAT must be true —
 not how it is implemented. Implementation details (file paths, function names)
 are design-phase concerns.
 
@@ -39,6 +40,46 @@ AFTER the response is sent and MUST NOT be awaited by the route handler.
 - THEN the error is logged via pino at `error` level
 - AND no unhandled promise rejection is raised at the process level
 - AND the webhook response (already sent) is unaffected
+
+---
+
+### Requirement: ai-reply — Process-Wide Kill Switch and New-Message Trigger
+
+Until SiviHub's agent takes over (stage E4), the Hub MUST NOT send AI-generated
+replies. The `AI_REPLY_ENABLED` environment variable is the process-wide kill
+switch:
+
+- It is on ONLY when set to the literal string `"true"`. Unset, `"false"`, `"1"`
+  or any other value MUST leave it off. It is off by default.
+- While it is off, the webhook MUST NOT start the AI loop: no LLM call and no
+  AI-generated reply, whatever `tenant_ai_config.enabled` says.
+- While it is on, the loop starts as before and the tenant config gate below
+  still applies.
+
+The AI loop MUST start only for a newly persisted inbound text. A re-delivered
+message (a `wamid` already stored, e.g. a Meta retry) MUST NOT start it again.
+
+#### Scenario: switch off → no AI reply even when the tenant enables the AI
+
+- GIVEN `AI_REPLY_ENABLED` is unset
+- AND the tenant's `tenant_ai_config` row has `enabled = true`
+- WHEN a new inbound text arrives within the 24h service window
+- THEN the LLM is not called
+- AND no WhatsApp reply is sent
+
+#### Scenario: switch on → AI reply runs
+
+- GIVEN `AI_REPLY_ENABLED = "true"`
+- AND the tenant's `tenant_ai_config` row has `enabled = true`
+- WHEN a new inbound text arrives within the 24h service window
+- THEN the AI loop runs and sends one reply to the sender
+
+#### Scenario: re-delivered wamid → no second reply
+
+- GIVEN `AI_REPLY_ENABLED = "true"` and the tenant AI is enabled
+- WHEN the same inbound message (same `wamid`) is delivered twice
+- THEN the LLM is called at most once
+- AND at most one reply is sent
 
 ---
 
@@ -319,7 +360,8 @@ Two environment variables control the AI pipeline:
 - 72h Click-to-WhatsApp Ad window.
 - Worker / pg-boss queue for retry-safe delivery.
 - Per-contact opt-in flag beyond "customer writes first".
-- Per-contact rate limiting or duplicate-reply debounce.
+- Per-contact rate limiting, or debounce across distinct messages (a re-delivered
+  `wamid` never triggers a second reply — see the kill-switch requirement).
 - `escalateToHuman` side effect on tool-call limit (log + stop only).
 - `ai.invocation_log` table (pino audit only).
 - Money-moving, scheduling, or invoicing tools.

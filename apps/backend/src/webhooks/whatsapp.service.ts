@@ -4,9 +4,11 @@
  * Pure-ish service: given raw HTTP body + signature header + app deps,
  * verifies HMAC-SHA256, Zod-parses the Meta payload, resolves tenant,
  * normalizes phone, then runs ONE withTenant transaction:
- *   upsertContactTx(tx, ...) → INSERT whatsapp_messages ON CONFLICT (wamid) DO NOTHING.
+ *   upsertContactTx(tx, ...) → INSERT whatsapp_messages ON CONFLICT (wamid) DO NOTHING RETURNING id.
  *
- * Returns Result<{ wamid, contactId }, WhatsappWebhookError>.
+ * Returns Result<{ wamid, contactId, tenantId, fromPhoneE164, text, isNew }, WhatsappWebhookError>.
+ * isNew is false when the wamid was already stored (a Meta re-delivery): callers MUST NOT
+ * auto-reply to it again.
  * ALL error paths return err(...) — nothing throws out to the route handler.
  *
  * Error → HTTP mapping (ack-fast contract):
@@ -139,6 +141,8 @@ export const handleInboundMessage = async (
       tenantId: string;
       fromPhoneE164: string;
       text: string | null;
+      /** true when this delivery stored the message; false for a re-delivered wamid. */
+      isNew: boolean;
     },
     WhatsappWebhookError
   >
@@ -219,7 +223,9 @@ export const handleInboundMessage = async (
 
       const contact = contactResult.value;
 
-      // 7b: Insert message with ON CONFLICT (wamid) DO NOTHING (idempotency)
+      // 7b: Insert message with ON CONFLICT (wamid) DO NOTHING (idempotency).
+      // RETURNING yields a row only when this delivery inserted it, which tells a new
+      // message from a re-delivered wamid.
       const receivedAt = new Date(Number(message.timestamp) * 1000);
       const rawPayload = {
         id: message.id,
@@ -229,7 +235,7 @@ export const handleInboundMessage = async (
         ...(message.text ? { text: message.text } : {}),
       };
 
-      await tx.execute(
+      const inserted = await tx.execute(
         rawSql`
           INSERT INTO whatsapp_messages
             (tenant_id, wamid, phone_number_id, contact_id, from_phone_e164,
@@ -245,10 +251,12 @@ export const handleInboundMessage = async (
              ${JSON.stringify(rawPayload)}::jsonb,
              ${receivedAt.toISOString()}::timestamptz)
           ON CONFLICT (wamid) DO NOTHING
+          RETURNING id
         `,
       );
+      const isNew = (inserted as unknown as Array<{ id: string }>).length > 0;
 
-      return { wamid: message.id, contactId: contact.id };
+      return { wamid: message.id, contactId: contact.id, isNew };
     });
 
     return ok({ ...result, tenantId, fromPhoneE164, text: message.text?.body ?? null });

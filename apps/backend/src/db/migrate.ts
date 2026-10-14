@@ -42,6 +42,8 @@ const MIGRATION_FILES = [
   '0002_whatsapp.sql',
   '0003_outbound.sql',
   '0004_tenant_ai_config.sql',
+  // 0005-0009 are claimed by unmerged branches; 0010 is intentionally next.
+  '0010_fixed_replies.sql',
 ] as const;
 const MIGRATIONS_DIR = join(__dirname, '../../drizzle');
 

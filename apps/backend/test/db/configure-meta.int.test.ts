@@ -12,7 +12,7 @@
  * - update path (seeded dev account replaced by the real credentials)
  * - insert path (no active account → one inserted)
  * - >1 active accounts → MULTIPLE_ACTIVE_ACCOUNTS, nothing written
- * - tenant_ai_config enabled (flip existing / insert seed defaults)
+ * - tenant_ai_config never switched on (existing row untouched / seed defaults inserted off)
  * - phone_number_id owned by another tenant → PHONE_NUMBER_ID_IN_USE, tx rolled back
  * - the access token never appears in any produced output string
  *
@@ -154,10 +154,11 @@ describe('configure-meta output strings', () => {
       displayPhoneNumber: CREDENTIALS.displayPhoneNumber,
       wabaId: CREDENTIALS.wabaId,
       account: 'updated',
-      aiConfig: 'enabled',
+      aiConfig: 'unchanged',
     });
 
     expect(text).toContain(DEV_TENANT_ID);
+    expect(text).not.toContain('enabled = true');
     expect(text).toContain(CREDENTIALS.phoneNumberId);
     expect(text).toContain(CREDENTIALS.displayPhoneNumber);
     expect(text).not.toContain(SECRET_TOKEN);
@@ -260,8 +261,10 @@ describe('configureMeta (Testcontainers)', () => {
       displayPhoneNumber: CREDENTIALS.displayPhoneNumber,
       wabaId: CREDENTIALS.wabaId,
       account: 'updated',
-      aiConfig: 'already-enabled',
+      aiConfig: 'unchanged',
     });
+    // configure:meta never switches the AI on: the seeded config stays off.
+    expect((await devAiConfigs())[0]?.enabled).toBe(false);
 
     const rows = await activeDevAccounts();
     expect(rows).toHaveLength(1);
@@ -336,7 +339,7 @@ describe('configureMeta (Testcontainers)', () => {
     expect((await devAiConfigs())[0]?.enabled).toBe(false);
   });
 
-  it('enables an existing disabled AI config without touching its other fields', async () => {
+  it('never switches the AI on: an existing disabled AI config stays disabled and untouched', async () => {
     await runDevSeed(db.adminSql);
     await db.adminSql`UPDATE tenant_ai_config SET enabled = false WHERE tenant_id = ${DEV_TENANT_ID}::uuid`;
     const [before] = await devAiConfigs();
@@ -345,21 +348,30 @@ describe('configureMeta (Testcontainers)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.aiConfig).toBe('enabled');
+    expect(result.value.aiConfig).toBe('unchanged');
     const configs = await devAiConfigs();
     expect(configs).toHaveLength(1);
-    expect(configs[0]?.id).toBe(before?.id);
-    expect(configs[0]?.enabled).toBe(true);
-    expect(configs[0]?.vertical).toBe(before?.vertical);
-    expect(configs[0]?.businessName).toBe(before?.businessName);
-    expect(configs[0]?.businessInfo).toEqual(before?.businessInfo);
+    expect(configs[0]).toEqual(before);
 
-    // The AI reply path (RLS-scoped) now sees an enabled config.
+    // The AI reply path (RLS-scoped) still sees no enabled config.
     const runtime = await getTenantAiConfig(db.withTenant, DEV_TENANT_ID);
-    expect(runtime.ok && runtime.value?.enabled).toBe(true);
+    expect(runtime).toEqual({ ok: true, value: null });
   });
 
-  it('inserts the seed-default AI config when the tenant has none', async () => {
+  it('leaves an existing enabled AI config untouched (existing rows are not rewritten)', async () => {
+    await runDevSeed(db.adminSql);
+    await db.adminSql`UPDATE tenant_ai_config SET enabled = true WHERE tenant_id = ${DEV_TENANT_ID}::uuid`;
+    const [before] = await devAiConfigs();
+
+    const result = await configureMeta(db.adminSql, CREDENTIALS);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.aiConfig).toBe('unchanged');
+    expect(await devAiConfigs()).toEqual([before]);
+  });
+
+  it('inserts the seed-default AI config, switched off, when the tenant has none', async () => {
     await runDevSeed(db.adminSql);
     await db.adminSql`DELETE FROM tenant_ai_config WHERE tenant_id = ${DEV_TENANT_ID}::uuid`;
 
@@ -370,7 +382,7 @@ describe('configureMeta (Testcontainers)', () => {
     expect(result.value.aiConfig).toBe('inserted');
     const configs = await devAiConfigs();
     expect(configs).toHaveLength(1);
-    expect(configs[0]?.enabled).toBe(true);
+    expect(configs[0]?.enabled).toBe(false);
     expect(configs[0]?.vertical).toBe(DEV_AI_VERTICAL);
     expect(configs[0]?.businessName).toBe(DEV_AI_BUSINESS_NAME);
   });

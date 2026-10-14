@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Define the observable behavior for the WhatsApp inbound webhook skeleton. This slice wires Meta's Cloud API verification handshake and inbound message ingestion into the Hub: verify signature (global key), resolve tenant by `phone_number_id`, upsert or reuse contact, and persist the raw message idempotently. No AI, no outbound, no reply. This spec describes WHAT must be true — not how it is implemented.
+Define the observable behavior for the WhatsApp inbound webhook skeleton. This slice wires Meta's Cloud API verification handshake and inbound message ingestion into the Hub: verify signature (global key), resolve tenant by `phone_number_id`, upsert or reuse contact, and persist the raw message idempotently. Replies are not defined here: the webhook only hands a NEW inbound text (never a re-delivered `wamid`) to the automatic reply, which the `ai-reply` spec governs and which the `AI_REPLY_ENABLED` switch keeps off by default. This spec describes WHAT must be true — not how it is implemented.
 
 ---
 
@@ -225,11 +225,14 @@ The `whatsapp_messages` table MUST be created with the columns and constraints s
 
 The system MUST persist each inbound message with `ON CONFLICT (wamid) DO NOTHING`. A re-delivered message with a `wamid` already in the table MUST produce no duplicate row and MUST NOT return an error to the caller.
 
+The service result MUST tell a new message from a re-delivery: `isNew = true` when this delivery stored the row, `isNew = false` when the `wamid` was already stored. A re-delivery MUST NOT trigger any automatic reply (see the `ai-reply` spec).
+
 #### Scenario: first delivery persists the row
 
 - GIVEN no row exists for `wamid = 'wamid_abc'` under the current tenant
 - WHEN the service inserts a message with that `wamid`
 - THEN exactly one row exists in `whatsapp_messages` with `wamid = 'wamid_abc'`
+- AND the service result has `isNew = true`
 
 #### Scenario: re-delivery of existing wamid produces no duplicate
 
@@ -237,6 +240,7 @@ The system MUST persist each inbound message with `ON CONFLICT (wamid) DO NOTHIN
 - WHEN the service inserts again with the same `wamid` (ON CONFLICT DO NOTHING)
 - THEN still exactly one row exists (no duplicate)
 - AND the operation does not raise an error
+- AND the service result has `isNew = false`, so no automatic reply is started
 
 ---
 
