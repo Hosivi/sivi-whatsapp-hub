@@ -2,7 +2,8 @@
  * seed-dev.ts — Idempotent dev seed.
  *
  * Inserts a fixed dev tenant row into whatsapp_accounts so the inbound webhook
- * can resolve the tenant during local development. Safe to run multiple times:
+ * can resolve the tenant during local development, plus its tenant_ai_config
+ * (AI switched off) and tenant_reply_settings rows. Safe to run multiple times:
  * uses INSERT ... ON CONFLICT DO NOTHING so repeated runs are no-ops.
  *
  * Exports DEV_TENANT_ID and DEV_PHONE_NUMBER_ID for use by integration tests
@@ -102,6 +103,16 @@ export async function runDevSeed(sql: postgres.Sql): Promise<void> {
        ${JSON.stringify(DEV_AI_BUSINESS_INFO)}::jsonb,
        false,
        NULL)
+    ON CONFLICT DO NOTHING
+  `;
+
+  // Insert the dev tenant_reply_settings row so the fixed replies greet with the business
+  // name and answer "1" with real hours. Greeting and handoff keep the default texts.
+  // ON CONFLICT DO NOTHING (partial unique index on tenant_id WHERE deleted_at IS NULL)
+  // — an existing row is never rewritten.
+  await sql`
+    INSERT INTO tenant_reply_settings (tenant_id, business_name, hours_text)
+    VALUES (${DEV_TENANT_ID}::uuid, ${DEV_AI_BUSINESS_NAME}, ${DEV_AI_BUSINESS_INFO.hours})
     ON CONFLICT DO NOTHING
   `;
 }

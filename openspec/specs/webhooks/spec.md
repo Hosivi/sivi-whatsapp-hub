@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Define the observable behavior for the WhatsApp inbound webhook skeleton. This slice wires Meta's Cloud API verification handshake and inbound message ingestion into the Hub: verify signature (global key), resolve tenant by `phone_number_id`, upsert or reuse contact, and persist the raw message idempotently. Replies are not defined here: the webhook only hands a NEW inbound text (never a re-delivered `wamid`) to the automatic reply, which the `ai-reply` spec governs and which the `AI_REPLY_ENABLED` switch keeps off by default. This spec describes WHAT must be true — not how it is implemented.
+Define the observable behavior for the WhatsApp inbound webhook skeleton. This slice wires Meta's Cloud API verification handshake and inbound message ingestion into the Hub: verify signature (global key), resolve tenant by `phone_number_id`, upsert or reuse contact, and persist the raw message idempotently. Replies are not defined here: the webhook only hands a NEW inbound text (never a re-delivered `wamid`) to the automatic reply. While `AI_REPLY_ENABLED` is off (the default) that is the fixed reply (`fixed-replies` spec); when it is on, the AI reply (`ai-reply` spec). Never both. This spec describes WHAT must be true — not how it is implemented.
 
 ---
 
@@ -225,7 +225,7 @@ The `whatsapp_messages` table MUST be created with the columns and constraints s
 
 The system MUST persist each inbound message with `ON CONFLICT (wamid) DO NOTHING`. A re-delivered message with a `wamid` already in the table MUST produce no duplicate row and MUST NOT return an error to the caller.
 
-The service result MUST tell a new message from a re-delivery: `isNew = true` when this delivery stored the row, `isNew = false` when the `wamid` was already stored. A re-delivery MUST NOT trigger any automatic reply (see the `ai-reply` spec).
+The service result MUST tell a new message from a re-delivery: `isNew = true` when this delivery stored the row, `isNew = false` when the `wamid` was already stored. A re-delivery MUST NOT trigger any automatic reply — neither a fixed reply (`fixed-replies` spec) nor an AI reply (`ai-reply` spec).
 
 #### Scenario: first delivery persists the row
 

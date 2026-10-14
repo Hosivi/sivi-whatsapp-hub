@@ -52,9 +52,11 @@ switch:
 - It is on ONLY when set to the literal string `"true"`. Unset, `"false"`, `"1"`
   or any other value MUST leave it off. It is off by default.
 - While it is off, the webhook MUST NOT start the AI loop: no LLM call and no
-  AI-generated reply, whatever `tenant_ai_config.enabled` says.
+  AI-generated reply, whatever `tenant_ai_config.enabled` says. The fixed replies
+  answer instead (see the `fixed-replies` spec).
 - While it is on, the loop starts as before and the tenant config gate below
-  still applies.
+  still applies. The fixed replies MUST NOT run: exactly one of the two paths
+  handles each message, never both.
 
 The AI loop MUST start only for a newly persisted inbound text. A re-delivered
 message (a `wamid` already stored, e.g. a Meta retry) MUST NOT start it again.
@@ -65,7 +67,7 @@ message (a `wamid` already stored, e.g. a Meta retry) MUST NOT start it again.
 - AND the tenant's `tenant_ai_config` row has `enabled = true`
 - WHEN a new inbound text arrives within the 24h service window
 - THEN the LLM is not called
-- AND no WhatsApp reply is sent
+- AND no AI-generated reply is sent; only the fixed reply, if one applies, is sent
 
 #### Scenario: switch on → AI reply runs
 
@@ -73,6 +75,7 @@ message (a `wamid` already stored, e.g. a Meta retry) MUST NOT start it again.
 - AND the tenant's `tenant_ai_config` row has `enabled = true`
 - WHEN a new inbound text arrives within the 24h service window
 - THEN the AI loop runs and sends one reply to the sender
+- AND no fixed reply is sent
 
 #### Scenario: re-delivered wamid → no second reply
 

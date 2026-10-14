@@ -750,7 +750,7 @@ describe('/webhooks/whatsapp', () => {
       `;
     });
 
-    it('switch off + tenant_ai_config.enabled = true → 0 LLM calls and 0 sends', async () => {
+    it('switch off + tenant_ai_config.enabled = true → 0 LLM calls, only the fixed reply is sent', async () => {
       const { app: appOff, meta, llm } = makeAppWithFakes(false);
 
       const res = await postWebhook(
@@ -758,13 +758,18 @@ describe('/webhooks/whatsapp', () => {
         makeMetaPayload({ wamid: 'switch_off_wamid', timestamp: nowTimestamp() }),
       );
       expect(res.status).toBe(200);
+      await vi.waitFor(() => expect(meta.calls).toHaveLength(1), { timeout: 5_000 });
       await settleBackgroundWork();
 
       expect(llm.calls).toHaveLength(0);
-      expect(meta.calls).toHaveLength(0);
+      expect(meta.calls).toHaveLength(1);
+      expect(meta.calls[0]?.to).toBe('+51987654321');
+      expect(meta.calls[0]?.text).toBe(
+        '¡Hola! Gracias por escribirnos. Responde 1 para ver nuestro horario o 2 para hablar con un asesor.',
+      );
     });
 
-    it('switch on → the AI reply still runs (one LLM call, one send to the sender)', async () => {
+    it('switch on → only the AI reply runs (one LLM call, one send, no fixed reply)', async () => {
       const { app: appOn, meta, llm } = makeAppWithFakes(true);
 
       const res = await postWebhook(
@@ -774,7 +779,9 @@ describe('/webhooks/whatsapp', () => {
       expect(res.status).toBe(200);
 
       await vi.waitFor(() => expect(meta.calls).toHaveLength(1), { timeout: 5_000 });
+      await settleBackgroundWork();
       expect(llm.calls).toHaveLength(1);
+      expect(meta.calls).toHaveLength(1);
       expect(meta.calls[0]?.to).toBe('+51987654321');
       expect(meta.calls[0]?.text).toBe('fake reply');
     });
