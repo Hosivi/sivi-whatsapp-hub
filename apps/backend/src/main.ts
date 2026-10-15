@@ -48,12 +48,19 @@ const meta =
       ? createFakeMetaClient()
       : createMetaClient(env.WHATSAPP_META_API_VERSION);
 
-// LLM adapter selection:
-//   dev (ENABLE_DEV_ENDPOINTS) → fake adapter (no Gemini calls, safe for local dev)
-//   default                    → real Gemini adapter (requires GEMINI_API_KEY)
-const llm = env.ENABLE_DEV_ENDPOINTS
-  ? createFakeLlmAdapter()
-  : createGeminiAdapter(env.GEMINI_API_KEY ?? '', env.AI_MODEL);
+// LLM adapter selection — chosen by GEMINI_API_KEY presence, decoupled from
+// ENABLE_DEV_ENDPOINTS so a real Gemini reply can be exercised through the dev
+// console (which needs ENABLE_DEV_ENDPOINTS=true) while WhatsApp stays mocked.
+//   key present     → real Gemini adapter (dev AND prod)
+//   no key + dev    → fake adapter (canned replies, safe for local dev without a key)
+//   no key + prod   → real Gemini adapter with an empty key → LLM_FAILED at call time.
+//                     Deliberate: prod must never emit a fake reply to a real customer;
+//                     the fake adapter stays confined to dev.
+const llm = env.GEMINI_API_KEY
+  ? createGeminiAdapter(env.GEMINI_API_KEY, env.AI_MODEL)
+  : env.ENABLE_DEV_ENDPOINTS
+    ? createFakeLlmAdapter()
+    : createGeminiAdapter('', env.AI_MODEL);
 
 const app = buildApp({ db, env, meta, llm, logger });
 
